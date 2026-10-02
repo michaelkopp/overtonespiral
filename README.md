@@ -4,7 +4,7 @@ Overtone Spiral measures the fundamental and the dominant overtones of an instru
 recording or live from the microphone, and shows them on a spiral with one turn per octave.
 It was made for crystal singing bowls but works for any instrument with stable partials.
 
-**App:** [`index.html`](index.html), a single page with no build step and no server code
+**App:** <https://overtonespiral.tystnadsklangen.se/>
 **Paper:** [`overtone-spiral.pdf`](overtone-spiral.pdf)
 
 ---
