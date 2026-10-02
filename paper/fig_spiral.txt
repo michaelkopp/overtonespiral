@@ -1,0 +1,24 @@
+Overtone Spiral — dominant partials
+
+Reference:   A4 = 440.00 Hz, 12-tone equal temperament
+Exported:    10/2/2026, 2:03:37 PM
+
+Current measurement
+Source:      bowl_full.wav
+Window:      18.62–23.80 s (automatic: ring-out after the attack at 18.60 s)
+Criteria:    confidence >= 70 %, level >= -60 dB re strongest partial, heard for >= 1.0 s
+
+#  Note        Frequency (Hz)    Ratio  Level (dB)   Audibility  Confidence   ± cents  Beat (Hz)  Partner (Hz)
+--------------------------------------------------------------------------------------------------------------
+1  A#3+42              238.87    1.000        -3.3        clear        99 %      0.14       1.11        237.76
+2  D#5-11              618.46    2.589         0.0     dominant        99 %      0.10       0.95        619.42
+3  D6-47              1143.27    4.786        -3.2     dominant       100 %      0.06       0.84       1142.42
+4  A6+38              1799.24    7.532       -14.4        clear        99 %      1.45       3.01             -
+
+Note = equal-tempered note name, octave and deviation in cents (A4 = MIDI 69).
+Ratio = frequency / lowest listed partial. Level = peak level in the window relative to the strongest partial.
+Audibility = level corrected for the ear's sensitivity (ISO 226:2003 equal-loudness contour, 60 phon), relative to the most
+  prominent partial: dominant >= -10 dB, clear >= -25 dB, faint >= -40 dB, very faint below; one step lower when a partial
+  at least 15 dB louder lies within one critical band.
+± cents = standard uncertainty of the frequency estimate.
+Beat = beating rate of a split mode; Partner = frequency of the weaker mode of the pair, where the long-window spectrum separates it.
