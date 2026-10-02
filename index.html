@@ -168,6 +168,7 @@ tr.rej td.note { font-weight: 500; }
 .confirm button { font-size: 12px; }
 .lib-note { margin: 0; font-size: 11.5px; color: var(--faint); text-wrap: pretty; }
 .saveform { display: flex; gap: 6px; flex-wrap: wrap; }
+.form-hint { flex: 1 1 100%; font-size: 11.5px; color: var(--faint); overflow-wrap: anywhere; }
 .saveform input { flex: 1 1 160px; min-width: 0; height: 30px; background: var(--raise); border: 1px solid var(--rule); border-radius: 6px; padding: 0 8px; }
 .legend { position: absolute; right: 16px; top: 48px; display: grid; gap: 5px; justify-items: end; font: 12px var(--ui); color: var(--chalk); pointer-events: none; max-width: 40%; }
 .legend span { display: inline-flex; align-items: center; gap: 7px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; background: rgba(12, 14, 20, .7); padding: 1px 4px; border-radius: 4px; }
@@ -272,6 +273,12 @@ tr.rej td.note { font-weight: 500; }
           <input id="bowlName" maxlength="60" aria-label="Bowl name" placeholder="Bowl name">
           <button class="btn small primary" type="submit">Save</button>
           <button class="btn small" type="button" id="saveCancel">Cancel</button>
+        </form>
+        <form class="saveform" id="exportForm" hidden>
+          <input id="exportName" maxlength="80" aria-label="File name for the exported bowls (empty: today's date)" autocomplete="off" spellcheck="false">
+          <button class="btn small primary" type="submit">Export</button>
+          <button class="btn small" type="button" id="exportCancel">Cancel</button>
+          <small class="form-hint" id="exportHint"></small>
         </form>
         <ul id="libList"></ul>
         <p class="lib-note" id="libNote"></p>
@@ -2149,6 +2156,7 @@ function renderLib() {
 $('#saveBowlBtn').onclick = () => {
   if (!st.result || !listTones(st.result).length) return toast('Measure a bowl first: open a recording, or strike it with the microphone on.');
   const base = st.source === 'file' && st.name ? st.name.replace(/\.[a-z0-9]+$/i, '').replace(/[_]+/g, ' ') : 'Bowl ' + (lib.bowls.length + 1);
+  $('#exportForm').hidden = true;
   $('#bowlName').value = base; $('#saveForm').hidden = false; $('#bowlName').focus(); $('#bowlName').select();
 };
 $('#saveCancel').onclick = () => { $('#saveForm').hidden = true; };
@@ -2161,12 +2169,27 @@ $('#saveForm').addEventListener('submit', async e => {
   await libAdd(b);
   toast(`Saved “${name}” with ${b.partials.length} partials.`);
 });
+// Export of the bowl library: the user may name the file; left empty, it is named after today's date.
+function libExportDefault() { const d = new Date(), p2 = n => String(n).padStart(2, '0'); return `overtone-spiral-bowls_${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}`; }
 $('#libExportBtn').onclick = () => {
   if (!lib.bowls.length) return toast('There are no saved bowls to export yet.');
-  const data = { app: 'Overtone Spiral', version: 1, exported: new Date().toISOString(), bowls: lib.bowls.map(b => { const c = Object.assign({}, b); delete c.id; return c; }) };
-  const d = new Date(), p2 = n => String(n).padStart(2, '0');
-  saveFile(`overtone-spiral-bowls_${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}.json`, JSON.stringify(data, null, 1), 'application/json');
+  const f = $('#exportForm');
+  if (!f.hidden) { f.hidden = true; return; }
+  $('#saveForm').hidden = true;
+  $('#exportName').value = ''; $('#exportName').placeholder = 'File name';
+  $('#exportHint').textContent = `Left empty, the file is named ${libExportDefault()}.json`;
+  f.hidden = false; $('#exportName').focus();
 };
+$('#exportCancel').onclick = () => { $('#exportForm').hidden = true; };
+$('#exportName').addEventListener('keydown', e => { if (e.key === 'Escape') $('#exportForm').hidden = true; });
+$('#exportForm').addEventListener('submit', e => {
+  e.preventDefault();
+  let name = $('#exportName').value.trim().replace(/\.json$/i, '').replace(/[\/\\:*?"<>|\u0000-\u001f]+/g, '_').replace(/^\.+/, '').trim();
+  if (!name) name = libExportDefault();
+  const data = { app: 'Overtone Spiral', version: 1, exported: new Date().toISOString(), bowls: lib.bowls.map(b => { const c = Object.assign({}, b); delete c.id; return c; }) };
+  $('#exportForm').hidden = true;
+  saveFile(name + '.json', JSON.stringify(data, null, 1), 'application/json');
+});
 $('#libImportLbl').addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $('#libImport').click(); } });
 $('#libImport').addEventListener('change', async e => {
   const f = e.target.files[0]; e.target.value = ''; if (!f) return;
