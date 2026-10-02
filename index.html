@@ -187,13 +187,23 @@ tr.rej td.note { font-weight: 500; }
   .sep { display: none; }
 }
 @media (max-width: 480px) {
-  /* phones: the five columns fit the width without sideways scrolling */
-  th, td { padding-left: 5px; padding-right: 5px; }
-  th:first-child, td:first-child { padding-left: 14px; }
-  th:last-child, td:last-child { padding-right: 14px; }
-  td.idx { width: 28px; }
-  td.conf { width: 92px; }
+  /* phones: the five columns fit widths down to 340 px without sideways scrolling */
+  th, td { padding-left: 4px; padding-right: 4px; }
+  th:first-child, td:first-child { padding-left: 10px; }
+  th:last-child, td:last-child { padding-right: 10px; }
+  th { letter-spacing: .04em; }
+  td.idx { width: 22px; }
+  td.idx .f1 { font-size: 8px; letter-spacing: .02em; }
+  td.note { font-size: 17px; }
+  td.hz small { font-size: 10.5px; }
+  td.lv small.aud { letter-spacing: .03em; }
+  td.conf { width: 78px; }
+  .meter { gap: 5px; }
   .ledger-head, .lib, .ledger-foot { padding-left: 14px; padding-right: 14px; }
+}
+@media (max-width: 345px) {
+  .meter .bar { display: none; }
+  td.conf { width: auto; }
 }
 @media (prefers-reduced-motion: reduce) { .btn[aria-pressed="true"] .dot { animation: none; } }
 </style>
