@@ -79,7 +79,7 @@ button, select, input { font: inherit; color: inherit; }
 /* main grid */
 .main { min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(330px, 450px); grid-template-rows: minmax(0, 1fr) 156px; }
 .scope { grid-column: 1; grid-row: 1; position: relative; min-height: 0; display: grid; place-items: center; overflow: hidden; padding-top: 18px; }
-#spiral { display: block; touch-action: none; max-width: 100%; }
+#spiral { display: block; touch-action: pan-y pinch-zoom; max-width: 100%; }   /* a swipe over the spiral scrolls the page */
 .hud { position: absolute; left: 16px; right: 170px; top: 12px; font: 11px/1.4 var(--mono); color: var(--dim); letter-spacing: .06em; text-transform: uppercase; pointer-events: none; }
 .hud strong { color: var(--chalk); font-weight: 500; }
 .scope-seg { position: absolute; right: 16px; top: 10px; background: var(--ink); }
@@ -128,7 +128,7 @@ tr.rej td.note { font-weight: 500; }
 .ledger-foot { padding: 10px 18px 12px; border-top: 1px solid var(--rule); font-size: 12px; color: var(--faint); display: flex; flex-wrap: wrap; gap: 6px 14px; justify-content: space-between; }
 
 .timeline { grid-column: 1; grid-row: 2; border-top: 1px solid var(--rule); background: var(--panel); position: relative; min-width: 0; }
-#tl { display: block; width: 100%; height: 100%; cursor: crosshair; touch-action: none; }
+#tl { display: block; width: 100%; height: 100%; cursor: crosshair; touch-action: pan-y; }   /* horizontal drags select, vertical swipes scroll */
 .tl-hint { position: absolute; right: 12px; top: 8px; font: 11px var(--mono); color: var(--faint); pointer-events: none; }
 
 /* settings */
@@ -176,14 +176,24 @@ tr.rej td.note { font-weight: 500; }
 @media (max-width: 900px) {
   .app { height: auto; min-height: 100%; }
   .main { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto auto; }
+  /* narrow screens: spiral, then the list of partials, then the timeline */
   .scope { grid-row: 1; aspect-ratio: 1; max-width: 100%; }
-  .timeline { grid-row: 2; height: 140px; }
-  .ledger { grid-column: 1; grid-row: 3; border-left: 0; border-top: 1px solid var(--rule); }
+  .ledger { grid-column: 1; grid-row: 2; border-left: 0; border-top: 1px solid var(--rule); }
+  .timeline { grid-row: 3; height: 140px; }
   .lib { max-height: none; }
   .legend { top: 44px; }
   .tablewrap { overflow-x: auto; }
   .tl-hint { display: none; }
   .sep { display: none; }
+}
+@media (max-width: 480px) {
+  /* phones: the five columns fit the width without sideways scrolling */
+  th, td { padding-left: 5px; padding-right: 5px; }
+  th:first-child, td:first-child { padding-left: 14px; }
+  th:last-child, td:last-child { padding-right: 14px; }
+  td.idx { width: 28px; }
+  td.conf { width: 92px; }
+  .ledger-head, .lib, .ledger-foot { padding-left: 14px; padding-right: 14px; }
 }
 @media (prefers-reduced-motion: reduce) { .btn[aria-pressed="true"] .dot { animation: none; } }
 </style>
@@ -1619,6 +1629,7 @@ tlCv.addEventListener('pointermove', e => {
   else { const f0 = tlFrame(xT(tlDrag.x0)), f1 = tlFrame(xT(x)); a = Math.min(f0, f1); b = Math.max(f0, f1) - wf; if (b < a + minF) b = a + minF; b = Math.min(n, b); }
   tlDrag.sel = { a, b }; tlDirty = true;
 });
+tlCv.addEventListener('pointercancel', () => { if (tlDrag) { tlDrag = null; tlDirty = true; } });   // the page took the gesture (scrolling)
 tlCv.addEventListener('pointerup', () => {
   if (!tlDrag) return;
   const s = tlDrag.sel, moved = s.a !== tlDrag.s0.a || s.b !== tlDrag.s0.b;
@@ -2149,8 +2160,8 @@ $('#libImport').addEventListener('change', async e => {
   toast(n ? `Imported ${n} bowl${n > 1 ? 's' : ''}.` : 'No new bowls in that file (they are already in the library).');
 });
 
-/* hover: name what is under the pointer on the spiral */
-spiralCv.addEventListener('pointermove', e => {
+/* hover (or tap, on a touch screen): name what is under the pointer on the spiral */
+function spiralTip(e) {
   const r = spiralCv.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
   const near = hits.filter(h => Math.hypot(h.x - x, h.y - y) <= h.r + 3).sort((a, b) => Math.hypot(a.x - x, a.y - y) - Math.hypot(b.x - x, b.y - y));
   const tip = $('#tip');
@@ -2168,8 +2179,11 @@ spiralCv.addEventListener('pointermove', e => {
   const w = tip.offsetWidth, h = tip.offsetHeight;
   tip.style.left = Math.max(8, Math.min(sr.width - w - 8, cx + 14)) + 'px';
   tip.style.top = Math.max(8, Math.min(sr.height - h - 8, cy + 14)) + 'px';
-});
-spiralCv.addEventListener('pointerleave', () => { $('#tip').hidden = true; });
+}
+spiralCv.addEventListener('pointermove', spiralTip);
+spiralCv.addEventListener('pointerdown', spiralTip);
+spiralCv.addEventListener('pointerleave', e => { if (e.pointerType === 'mouse') $('#tip').hidden = true; });
+window.addEventListener('scroll', () => { $('#tip').hidden = true; }, { passive: true });
 function esc(t) { return String(t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 function refreshHint() { tlDirty = true; }
 
