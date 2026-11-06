@@ -50,6 +50,9 @@ the file onto the page.
 - Finds each attack (strike) and measures on the free ring-out after it; without an attack it
   measures the stretch whose partials are measured best. Microphone input is captured
   automatically after every attack and the best capture is kept.
+- Measures with fixed parameters, so that a measurement is always made the same way; the settings
+  for the list (confidence threshold, weakest and shortest partial listed) only choose which of the
+  measured partials are shown.
 - Lists every partial that passes a confidence test (signal-to-noise ratio, frequency stability,
   duration, continuity) with frequency in Hz, note name with octave and cents
   (A4 = 440 Hz by default), ratio to the lowest partial, level, audibility and the standard

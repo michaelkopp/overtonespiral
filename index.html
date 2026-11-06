@@ -147,6 +147,7 @@ tr.rej td.note { font-weight: 500; }
 .settings h3:not(:first-child) { margin-top: 18px; }
 .field { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 4px 12px; margin: 8px 0; font-size: 13px; }
 .field small { grid-column: 1 / -1; color: var(--faint); font-size: 11.5px; }
+.set-note { margin: -4px 0 10px; color: var(--faint); font-size: 11.5px; line-height: 1.45; }
 .field input[type=number], .field select { width: 160px; height: 30px; background: var(--raise); border: 1px solid var(--rule); border-radius: 6px; padding: 0 8px; }
 .field input[type=range] { width: 150px; accent-color: var(--quartz); }
 .field output { font: 12px var(--mono); color: var(--chalk); min-width: 44px; display: inline-block; text-align: right; }
@@ -248,7 +249,7 @@ tr.rej td.note { font-weight: 500; }
     <section class="scope" id="scope">
       <canvas id="spiral" aria-label="Spiral spectrum: one turn per octave, twelve radial lines for the equal-tempered semitones"></canvas>
       <div class="hud" id="hud"></div>
-      <button class="btn small holdbtn" id="holdBtn" aria-pressed="false" hidden title="Freeze the real-time view (space)">Hold</button>
+      <button class="btn small holdbtn" id="holdBtn" aria-pressed="false" hidden title="Freeze the real-time view (space bar, when the microphone is on)">Hold</button>
       <div class="seg scope-seg" id="scopeSeg" hidden><button id="segLive" aria-pressed="true">Live</button><button id="segCap" aria-pressed="false">Capture</button></div>
       <div class="chips" id="chips"></div>
       <div class="legend" id="legend"></div>
@@ -308,14 +309,14 @@ tr.rej td.note { font-weight: 500; }
   <footer class="site-foot">Overtone Spiral is free software (GPL-3.0) · <a href="https://github.com/michaelkopp/overtonespiral" target="_blank" rel="noopener">Source code and paper on GitHub</a></footer>
 
   <div class="settings" id="settings" hidden role="dialog" aria-label="Settings">
-    <h3>Measurement</h3>
+    <h3>List of partials</h3>
+    <p class="set-note">These choose which measured partials are listed and how they are named. The measurement itself is always made the same way: 170 ms frames, windows of up to 5 s, chosen by the default criteria below.</p>
     <div class="field"><label for="sA4">Reference A4 (Hz)</label><input type="number" id="sA4" min="380" max="480" step="0.1"><small>Note names and cents are relative to 12-tone equal temperament at this A4.</small></div>
-    <div class="field"><label for="sThr">Confidence threshold</label><span class="rangewrap"><input type="range" id="sThr" min="30" max="95" step="1"><output id="oThr"></output></span><small>Only partials at or above this confidence are listed and marked.</small></div>
-    <div class="field"><label for="sDyn">Weakest partial listed</label><span class="rangewrap"><input type="range" id="sDyn" min="20" max="80" step="1"><output id="oDyn"></output></span><small>Level below the strongest partial in the window.</small></div>
-    <div class="field"><label for="sMinDur">Shortest partial listed</label><span class="rangewrap"><input type="range" id="sMinDur" min="0" max="3" step="0.1"><output id="oMinDur"></output></span><small>Partials heard for less time than this are left out. Off lists every confident partial, however short.</small></div>
-    <div class="field"><label for="sWin">Longest analysis window</label><span class="rangewrap"><input type="range" id="sWin" min="1" max="7" step="0.5"><output id="oWin"></output></span></div>
-    <div class="field"><label for="sRes">Frequency resolution</label><select id="sRes"><option value="fast">Fast (85 ms)</option><option value="std">Standard (170 ms)</option><option value="fine">Fine (340 ms)</option></select><small>Longer frames separate close partials better and react more slowly.</small></div>
+    <div class="field"><label for="sThr">Confidence threshold</label><span class="rangewrap"><input type="range" id="sThr" min="30" max="95" step="1"><output id="oThr"></output></span><small>Only partials at or above this confidence are listed and marked (default 70 %).</small></div>
+    <div class="field"><label for="sDyn">Weakest partial listed</label><span class="rangewrap"><input type="range" id="sDyn" min="20" max="80" step="1"><output id="oDyn"></output></span><small>Level below the strongest partial in the window (default −60 dB).</small></div>
+    <div class="field"><label for="sMinDur">Shortest partial listed</label><span class="rangewrap"><input type="range" id="sMinDur" min="0" max="3" step="0.1"><output id="oMinDur"></output></span><small>Partials heard for less time than this are left out (default 1 s). Off lists every confident partial, however short.</small></div>
     <h3>Observe (real time)</h3>
+    <p class="set-note">These change only the real-time view and its list; measurements are not affected.</p>
     <div class="field"><label for="sOFrame">Frame length</label><select id="sOFrame"><option value="short">Short (43 ms)</option><option value="medium">Medium (85 ms)</option><option value="long">Long (171 ms)</option></select><small>Shorter frames follow fast changes; longer frames separate partials that lie close together, especially in the bass, but dim partials whose pitch moves quickly, such as the upper harmonics of a voice with vibrato.</small></div>
     <div class="field"><label for="sOSmooth">Smoothing</label><select id="sOSmooth"><option value="fast">Fast</option><option value="medium">Medium</option><option value="steady">Steady</option></select><small>How quickly the display follows the sound. With medium frames a partial shows in full about 80 ms (fast), 100 ms (medium) or 160 ms (steady) after it starts, and is gone about as long after it stops.</small></div>
     <h3>Display</h3>
@@ -1255,12 +1256,13 @@ const $ = (s) => document.querySelector(s);
 const CELL_CENTS = 2, CPO = 1200 / CELL_CENTS;                 // cells per octave
 const F0 = 440 * Math.pow(2, (24 - 69) / 12);                    // C1 at A4 = 440 (fixed analysis grid)
 const NCELLS = 9 * CPO;                                          // C1 .. C10
-const RES = { fast: 0.085, std: 0.17, fine: 0.34 };
+// The measurement is made with fixed parameters (those evaluated in the paper); the settings only filter the list.
+const MEAS = { frame: 0.17, maxWindow: 5, thr: 0.7, dyn: 60, minDur: 1 };
 const OFRAME = { short: 0.04, medium: 0.08, long: 0.16 };                          // Observe: frame length (s, rounded up to 2^n samples)
 const OSMOOTH = { fast: [0.008, 0.03], medium: [0.015, 0.06], steady: [0.04, 0.17] }; // Observe: attack, release (s)
 
 /* ---------------- settings ---------------- */
-const DEF = { app: 'measure', oFrame: 'medium', oSmooth: 'medium', a4: 440, thr: 70, dyn: 60, minDur: 1, win: 5, res: 'std', low: 2, oct: 7, range: 60, lobe: 22, mode: 'mean', spell: 'sharp', bg: 'dark', ovLabels: 'notes' };
+const DEF = { app: 'measure', oFrame: 'medium', oSmooth: 'medium', a4: 440, thr: 70, dyn: 60, minDur: 1, low: 2, oct: 7, range: 60, lobe: 22, mode: 'mean', spell: 'sharp', bg: 'dark', ovLabels: 'notes' };
 const S = Object.assign({}, DEF);
 try { Object.assign(S, JSON.parse(localStorage.getItem('overtone-spiral-settings') || localStorage.getItem('overtone-spiral-settings') || '{}')); } catch (e) {}
 function saveSettings() { try { localStorage.setItem('overtone-spiral-settings', JSON.stringify(S)); } catch (e) {} }
@@ -1280,8 +1282,9 @@ const observing = () => S.app === 'observe';
 /* ---------------- helpers ---------------- */
 const fmt = (v, d) => (v < 0 ? '−' : '') + Math.abs(v).toFixed(d);
 function noteOf(f) { return C.noteInfo(f, S.a4, S.spell === 'flat'); }
-function frameOpts(sr) { const N = C.nextPow2(Math.round(sr * RES[S.res])); return { N, hop: N >> 4, fmin: 25, fmax: 12500 }; }
-function anaOpts() { return { threshold: S.thr / 100, dynRange: S.dyn, minDur: S.minDur, maxWindow: S.win, frame: frameOpts(st.sr) }; }
+function frameOpts(sr) { const N = C.nextPow2(Math.round(sr * MEAS.frame)); return { N, hop: N >> 4, fmin: 25, fmax: 12500 }; }
+function anaOpts() { return { threshold: MEAS.thr, dynRange: MEAS.dyn, minDur: MEAS.minDur, maxWindow: MEAS.maxWindow, frame: frameOpts(st.sr) }; }
+const measOk = t => t.conf >= MEAS.thr && t.rel >= -MEAS.dyn;       // a confident partial, by the fixed criteria
 function cellCfg() { return { f0: F0, cellCents: CELL_CENTS, range: 100 }; }
 function confColor(c) { return c >= 0.85 ? 'var(--good)' : c >= 0.6 ? 'var(--warn)' : 'var(--bad)'; }
 function toast(msg, ms = 4200) { const t = $('#toast'); t.textContent = msg; t.hidden = false; clearTimeout(toast.h); toast.h = setTimeout(() => { t.hidden = true; }, ms); }
@@ -1837,9 +1840,11 @@ function drawTimeline() {
       g.fillStyle = 'rgba(159,230,220,0.13)'; g.fillRect(xa, y0, xb - xa, y1 - y0);
       g.strokeStyle = '#9fe6dc'; g.lineWidth = 1.5; g.strokeRect(xa + 0.75, y0 + 0.75, xb - xa - 1.5, y1 - y0 - 1.5);
       g.fillStyle = '#9fe6dc'; g.fillRect(xa - 2, y0 + (y1 - y0) / 2 - 9, 4, 18); g.fillRect(xb - 2, y0 + (y1 - y0) / 2 - 9, 4, 18);
-      g.font = '11px "Azeret Mono", Menlo, monospace';
-      const lab = `${(sel.a * hs).toFixed(2)}–${(sel.b * hs + w).toFixed(2)} s`;
-      g.fillText(lab, Math.min(xa + 4, tlW - TL.padR - g.measureText(lab).width), y0 - 12);
+      if (!observing()) {                                 // in Observe the faded box is a reference only, without a label
+        g.font = '11px "Azeret Mono", Menlo, monospace';
+        const lab = `${(sel.a * hs).toFixed(2)}–${(sel.b * hs + w).toFixed(2)} s`;
+        g.fillText(lab, Math.min(xa + 4, tlW - TL.padR - g.measureText(lab).width), y0 - 12);
+      }
     }
     g.globalAlpha = 1;
     if (observing() && !st.play && st.obs.t != null) {
@@ -1948,11 +1953,6 @@ async function analyseFile() {
   setBusy(false);
   await chooseBest();
   if (observing() && st.source === 'file') obsAt(st.obs.t != null ? Math.min(st.obs.t, st.dur) : defaultObsT());
-}
-async function reselect() {
-  if (!st.ctx) return;
-  st.ctx.candidates = C.findCandidates(st.ctx, anaOpts());
-  if (st.sel && st.sel.manual) await setSelection(st.sel); else await chooseBest();
 }
 async function chooseBest() {
   const ctx = st.ctx; if (!ctx) return;
@@ -2153,7 +2153,7 @@ class Mic {
     this.frames = []; this.fr0 = Math.floor(this.next / this.H);
     this.nextIdx = this.fr0;
     this.od = new C.OnsetDetector(this.sr, {}); this.envOffset = Math.floor(this.total / this.od.block);
-    this.cellSlots = Math.ceil((S.win + 3) / this.hopSec);
+    this.cellSlots = Math.ceil((MEAS.maxWindow + 3) / this.hopSec);
     this.cellRing = Array.from({ length: this.cellSlots }, () => new Float32Array(NCELLS));
     this.oneCells = new Float64Array(NCELLS);
     this.lastSustain = 0; this.lastLive = 0;
@@ -2214,7 +2214,7 @@ class Mic {
     if (this.onsets.length > 200) this.onsets.shift();
     if (this.pending) { if (o.peak < this.pending.peak - 3) return; this.finalize(Math.floor(o.sample / this.H) - Math.ceil(this.N / this.H)); }
     const a = Math.ceil((o.sample + 0.015 * this.sr) / this.H);
-    this.pending = { onset: t, a, bMax: a + Math.round(S.win / this.hopSec), peak: o.peak };
+    this.pending = { onset: t, a, bMax: a + Math.round(MEAS.maxWindow / this.hopSec), peak: o.peak };
   }
   windowResult(a, b) {
     a = Math.max(a, this.fr0); b = Math.min(b, this.nextIdx);
@@ -2246,10 +2246,10 @@ class Mic {
   makeCapture(kind, a, b, onset) {
     const res = this.windowResult(a, b); if (!res) return null;
     this.finish(res, kind === 'onset' ? onset : null);
-    const sc = C.scoreWindow(res, S.thr / 100, S.dyn, S.minDur);
+    const sc = C.scoreWindow(res, MEAS.thr, MEAS.dyn, MEAS.minDur);
     if (sc.count === 0) return null;
     // trim to the last frame with a confident tone
-    let lastF = a; for (const t of res.tones) if (t.conf >= S.thr / 100 && t.rel >= -S.dyn && t.dur >= S.minDur) lastF = Math.max(lastF, t.last + 1);
+    let lastF = a; for (const t of res.tones) if (measOk(t) && t.dur >= MEAS.minDur) lastF = Math.max(lastF, t.last + 1);
     const b2 = Math.max(Math.min(res.b, lastF), Math.min(res.b, a + Math.round(0.5 / this.hopSec)));
     const cells = new Float64Array(NCELLS); let n = 0;
     for (let i = Math.max(a, this.nextIdx - this.cellSlots + 1); i < b2; i++) {
@@ -2280,18 +2280,18 @@ class Mic {
       this.lastLive = now;
       // live quality: tones tracked over the last 1.5 s
       const res = this.windowResult(idx - Math.round(1.5 / this.hopSec), idx);
-      this.liveTones = res ? res.tones.filter(t => t.conf >= S.thr / 100 && t.rel >= -S.dyn && t.last >= idx - Math.round(0.25 / this.hopSec)).sort((a, b) => a.f - b.f) : [];
+      this.liveTones = res ? res.tones.filter(t => measOk(t) && t.last >= idx - Math.round(0.25 / this.hopSec)).sort((a, b) => a.f - b.f) : [];
       renderChips();
       // end a capture early once the sound has died away
       if (this.pending && idx - this.pending.a > Math.round(1 / this.hopSec)) {
         const r2 = this.windowResult(this.pending.a, idx);
-        const alive = r2 && r2.tones.some(t => t.conf >= S.thr / 100 && t.last >= idx - Math.round(0.6 / this.hopSec));
+        const alive = r2 && r2.tones.some(t => t.conf >= MEAS.thr && t.last >= idx - Math.round(0.6 / this.hopSec));
         if (!alive) this.finalize(idx);
       }
     }
     if (!this.pending && now - this.lastSustain > 2500) {
       this.lastSustain = now;
-      const D = Math.round(S.win / this.hopSec);
+      const D = Math.round(MEAS.maxWindow / this.hopSec);
       const lastEnd = this.captures.length ? Math.round(this.captures[this.captures.length - 1].t1 / this.hopSec) : -1e9;
       if (idx - D > this.fr0 && idx - D > lastEnd - D / 2 && this.liveTones.length) {
         const c = this.makeCapture('sustain', idx - D, idx, null);
@@ -2761,12 +2761,11 @@ $('#pngBtn').onclick = async () => {
 /* =============================================================
    Settings
    ============================================================= */
-const F = { sOFrame: 'oFrame', sOSmooth: 'oSmooth', sA4: 'a4', sThr: 'thr', sDyn: 'dyn', sMinDur: 'minDur', sWin: 'win', sRes: 'res', sLow: 'low', sOct: 'oct', sRange: 'range', sLobe: 'lobe', sMode: 'mode', sSpell: 'spell', sBg: 'bg', sOvl: 'ovLabels' };
-const OUT = { sThr: v => v + ' %', sDyn: v => '−' + v + ' dB', sMinDur: v => (+v > 0 ? (+v).toFixed(1) + ' s' : 'off'), sWin: v => v + ' s', sRange: v => v + ' dB', sLobe: v => v + ' ¢' };
+const F = { sOFrame: 'oFrame', sOSmooth: 'oSmooth', sA4: 'a4', sThr: 'thr', sDyn: 'dyn', sMinDur: 'minDur', sLow: 'low', sOct: 'oct', sRange: 'range', sLobe: 'lobe', sMode: 'mode', sSpell: 'spell', sBg: 'bg', sOvl: 'ovLabels' };
+const OUT = { sThr: v => v + ' %', sDyn: v => '−' + v + ' dB', sMinDur: v => (+v > 0 ? (+v).toFixed(1) + ' s' : 'off'), sRange: v => v + ' dB', sLobe: v => v + ' ¢' };
 function syncSettingsUI() {
   for (const [id, k] of Object.entries(F)) { const el = document.getElementById(id); el.value = S[k]; const o = document.getElementById('o' + id.slice(1)); if (o && OUT[id]) o.textContent = OUT[id](S[k]); }
 }
-let reselectTimer = null;
 for (const [id, k] of Object.entries(F)) {
   const el = document.getElementById(id);
   el.addEventListener('input', () => {
@@ -2775,12 +2774,8 @@ for (const [id, k] of Object.entries(F)) {
     S[k] = v; saveSettings();
     const o = document.getElementById('o' + id.slice(1)); if (o && OUT[id]) o.textContent = OUT[id](v);
     geomCache = null; dirty = true;
-    if (k === 'thr' || k === 'dyn' || k === 'win' || k === 'minDur') {
-      clearTimeout(reselectTimer);
-      reselectTimer = setTimeout(() => { if (st.source === 'file') reselect(); else { if (st.mic && k === 'win') st.mic.reconfigure(); showMicCapture(); } }, 250);
-    } else if (k === 'res') {
-      if (st.source === 'file') analyseFile(); else if (st.mic) { st.mic.reconfigure(); showMicCapture(); }
-    } else if (k === 'mode') { if (st.source === 'file' && st.sel) setSelection(st.sel); }
+    if (k === 'thr' || k === 'dyn' || k === 'minDur') refreshAll();       // the list only; the measurement stays as it is
+    else if (k === 'mode') { if (st.source === 'file' && st.sel) setSelection(st.sel); }
     else if (k === 'oFrame' || k === 'oSmooth' || k === 'range' || k === 'low' || k === 'oct') { /* below */ }
     else { renderTable(); renderLedgerHead(); }
     if (observing() && ['oFrame', 'oSmooth', 'range', 'low', 'oct', 'a4', 'dyn'].includes(k)) {
