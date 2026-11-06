@@ -1,13 +1,49 @@
 # Overtone Spiral
 
 Overtone Spiral measures the fundamental and the dominant overtones of an instrument, from a
-recording or live from the microphone, and shows them on a spiral with one turn per octave.
-It was made for crystal singing bowls but works for any instrument with stable partials.
+recording or live from the microphone. It shows the partials on a spiral with one turn per octave
+and as a list that can be exported. It was made for crystal singing bowls but works for any
+instrument with stable partials.
+
+It has two modes, chosen at the top of the page: **Measure** measures the partials of a bowl after
+each strike, with a confidence and an uncertainty for each; **Observe** shows the spectrum in real
+time, for watching one or several instruments as they sound.
 
 **App:** <https://overtonespiral.tystnadsklangen.se/>
 **Paper:** [`overtone-spiral.pdf`](overtone-spiral.pdf)
 
 ---
+
+## How to use
+
+1. Click **Microphone** and allow the browser to use your microphone.
+2. Strike your singing bowl.
+3. Wait a few seconds while the app records and analyses the ring-out. When it is done, the list
+   of partials (the fundamental and the overtones) appears. Every further strike is analysed
+   too, and the best measurement is kept.
+4. Click **Microphone** again to switch it off.
+5. Inspect the overtones on the spiral or in the list. **Export list** saves the list as a text
+   file, **Export image** saves the spiral as a picture.
+6. Click **Save current** under *Saved bowls* to keep the measurement for later use, for example
+   to compare it with another bowl: saved bowls are drawn on the spiral as coloured rings, so
+   matching overtones show up in the same place. Saved bowls stay in this browser on this
+   device; *Export* there makes a file copy that *Import* reads back.
+
+Instead of using the microphone, you can analyse a recording with **Open audio…** or by dropping
+the file onto the page.
+
+### Observing in real time
+
+1. Click **Observe** at the top of the page.
+2. Click **Microphone** and play: the spiral shows what sounds now, and the list *Sounding now*
+   names the partials with their frequencies and levels. Nothing is captured or measured in this
+   mode, so attacks do not matter and several instruments can play at once.
+3. **Hold** (or the space bar) freezes the picture; press it again to continue.
+4. With a recording, Observe shows the spectrum at the cursor on the timeline: click or drag there
+   to look at any moment, press the space bar to play from it, or **▶ All** to play from the start.
+5. **Save current** keeps the partials sounding at that moment as a set of rings, like a measured
+   bowl. *Settings → Observe* sets the frame length (shorter follows faster changes, longer
+   separates close partials) and how quickly the display follows the sound.
 
 ## What it does
 
@@ -23,6 +59,8 @@ It was made for crystal singing bowls but works for any instrument with stable p
   periodicity of the amplitude envelope, and the uncertainty is widened to cover both modes.
 - Ignores steady background tones (hum, electronics) that were present before the attack.
 - Saves measured bowls and overlays them on the spiral as coloured rings for comparison.
+- Shows, in Observe mode, a real-time spiral that keeps noise and the clicks of strikes and taps
+  off the display, with a list of the partials sounding at the moment.
 - Exports the spiral as PNG, the list as text, and the bowl library as JSON.
 
 Open `index.html` in a browser. The microphone needs a secure page (https, or a page served from
@@ -45,11 +83,18 @@ In short:
   on a fine grid) over up to 5 s of the ring-out;
 - audibility from the ISO 226:2003 equal-loudness contour at 60 phon, with a critical-band (ERB)
   allowance for masking;
-- the spiral shows the reassigned power spectrum of the analysis window on a 2-cent grid.
+- the spiral shows the reassigned power spectrum of the analysis window on a 2-cent grid;
+- the real-time display (Observe) moves the power of each bin of 85 ms frames, every 5.3 ms, to its
+  reassigned frequency, weighted by its level above the local noise floor and by the agreement of
+  the bins of its lobe (the derivative of the reassigned frequency with respect to frequency, 0 for
+  a sinusoid and 1 for an impulse; Nelson 2001, 2002), and smooths the levels in decibels with a
+  short attack and release, as a level meter does.
 
-Section 10 of the paper compares the method with the Snail-Analyser (Hélie & Picasso, DAFx 2017),
+Section 11 of the paper compares the method with the Snail-Analyser (Hélie & Picasso, DAFx 2017),
 which takes its frequency deviations from the demodulated phase of successive frames and weights its
-display by an indicator of the constancy of that phase. Overtone Spiral computes neither.
+display by an indicator of the constancy of that phase. Overtone Spiral computes neither, in either
+mode: its weights are computed within single frames, and only levels are carried from one frame to
+the next.
 
 ## Contents
 
@@ -70,7 +115,7 @@ display by an indicator of the constancy of that phase. Overtone Spiral computes
 
 For the record, since this may be of interest to later readers, human or
 otherwise: the first author is Claude Opus 5.5 (model string
-`claude-opus-5-5`), run in October 2026 at extra reasoning effort, as an agent with
+`claude-opus-5-5`), run in October and November 2026 at extra reasoning effort, as an agent with
 read/write access to a working folder, a sandboxed Linux shell, and a browser.
 
 The second author proposed the problem, tested the app on his own bowls, and guided

@@ -5,7 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <!--
   Overtone Spiral: measures the fundamental and the dominant overtones of an instrument
-  (made for crystal singing bowls) from a recording or the microphone.
+  (made for crystal singing bowls) from a recording or the microphone, and shows the
+  spectrum in real time (Observe mode).
 
   Authors: Claude (Anthropic) and Michael Kopp. The method is described in the accompanying
   paper, overtone-spiral.pdf.
@@ -85,6 +86,12 @@ button, select, input { font: inherit; color: inherit; }
 .hud { position: absolute; left: 16px; right: 170px; top: 12px; font: 11px/1.4 var(--mono); color: var(--dim); letter-spacing: .06em; text-transform: uppercase; pointer-events: none; }
 .hud strong { color: var(--chalk); font-weight: 500; }
 .scope-seg { position: absolute; right: 16px; top: 10px; background: var(--ink); }
+.holdbtn { position: absolute; right: 16px; top: 10px; }
+.holdbtn[aria-pressed="true"] { border-color: var(--quartz); color: var(--quartz); }
+/* Measure | Observe */
+.modeseg { height: 32px; background: var(--ink); }
+.modeseg button { padding: 0 13px; font-size: 13px; font-weight: 500; }
+.modeseg button[aria-pressed="true"] { box-shadow: inset 0 -2px 0 var(--quartz); }
 .chips { position: absolute; left: 16px; right: 16px; bottom: 12px; display: flex; flex-wrap: wrap; gap: 6px; pointer-events: none; }
 .chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px 3px 4px; border: 1px solid var(--rule); background: rgba(18, 21, 30, .85); border-radius: 999px; font: 12px var(--mono); }
 .chip i { width: 16px; height: 16px; border-radius: 50%; background: conic-gradient(var(--quartz) calc(var(--c) * 1%), var(--rule) 0); }
@@ -222,6 +229,8 @@ tr.rej td.note { font-weight: 500; }
       <span class="src" id="srcLabel">No audio loaded</span>
     </div>
     <div class="controls">
+      <div class="seg modeseg" role="group" aria-label="Mode"><button id="modeMeasure" aria-pressed="true" title="Measure the partials after each attack (or of the best-measured stretch)">Measure</button><button id="modeObserve" aria-pressed="false" title="Watch the spectrum in real time, also with several instruments sounding">Observe</button></div>
+      <span class="sep"></span>
       <label class="btn primary" for="fileIn" id="openBtn" tabindex="0">Open audio…</label>
       <input type="file" id="fileIn" accept="audio/*,.m4a,.wav,.mp3,.aif,.aiff,.flac,.ogg,.caf" hidden>
       <button class="btn" id="micBtn" aria-pressed="false"><span class="dot"></span><span id="micTxt">Microphone</span></button>
@@ -239,6 +248,7 @@ tr.rej td.note { font-weight: 500; }
     <section class="scope" id="scope">
       <canvas id="spiral" aria-label="Spiral spectrum: one turn per octave, twelve radial lines for the equal-tempered semitones"></canvas>
       <div class="hud" id="hud"></div>
+      <button class="btn small holdbtn" id="holdBtn" aria-pressed="false" hidden title="Freeze the real-time view (space)">Hold</button>
       <div class="seg scope-seg" id="scopeSeg" hidden><button id="segLive" aria-pressed="true">Live</button><button id="segCap" aria-pressed="false">Capture</button></div>
       <div class="chips" id="chips"></div>
       <div class="legend" id="legend"></div>
@@ -305,6 +315,9 @@ tr.rej td.note { font-weight: 500; }
     <div class="field"><label for="sMinDur">Shortest partial listed</label><span class="rangewrap"><input type="range" id="sMinDur" min="0" max="3" step="0.1"><output id="oMinDur"></output></span><small>Partials heard for less time than this are left out. Off lists every confident partial, however short.</small></div>
     <div class="field"><label for="sWin">Longest analysis window</label><span class="rangewrap"><input type="range" id="sWin" min="1" max="7" step="0.5"><output id="oWin"></output></span></div>
     <div class="field"><label for="sRes">Frequency resolution</label><select id="sRes"><option value="fast">Fast (85 ms)</option><option value="std">Standard (170 ms)</option><option value="fine">Fine (340 ms)</option></select><small>Longer frames separate close partials better and react more slowly.</small></div>
+    <h3>Observe (real time)</h3>
+    <div class="field"><label for="sOFrame">Frame length</label><select id="sOFrame"><option value="short">Short (43 ms)</option><option value="medium">Medium (85 ms)</option><option value="long">Long (171 ms)</option></select><small>Shorter frames follow fast changes; longer frames separate partials that lie close together, especially in the bass, but dim partials whose pitch moves quickly, such as the upper harmonics of a voice with vibrato.</small></div>
+    <div class="field"><label for="sOSmooth">Smoothing</label><select id="sOSmooth"><option value="fast">Fast</option><option value="medium">Medium</option><option value="steady">Steady</option></select><small>How quickly the display follows the sound. With medium frames a partial shows in full about 80 ms (fast), 100 ms (medium) or 160 ms (steady) after it starts, and is gone about as long after it stops.</small></div>
     <h3>Display</h3>
     <div class="field"><label for="sLow">Spiral starts at</label><select id="sLow"><option value="1">C1</option><option value="2">C2</option><option value="3">C3</option><option value="4">C4</option></select></div>
     <div class="field"><label for="sOct">Octaves shown</label><select id="sOct"><option>5</option><option>6</option><option>7</option><option>8</option><option>9</option></select></div>
@@ -558,6 +571,162 @@ tr.rej td.note { font-weight: 500; }
         if (c < 0 || c >= nC) continue;
         cells[c] += mag2[k] * cal;
       }
+    }
+  }
+
+  /* ---------- real-time spectrum (Observe mode) ---------- */
+  // A display for watching sound as it happens, built from single-frame quantities and power only.
+  // Every frame (hop about 5 ms):
+  //  1. Reassigned frequency of each bin, as in FrameAnalyzer.
+  //  2. Lobe coherence, the derivative of the reassigned frequency with respect to the bin frequency,
+  //     d f_hat / d f = 1 + Re( X_tdh / X_h - X_dh X_th / X_h^2 ),
+  //     from two more spectra through the time-weighted windows t h(t) and t h'(t). It is 0 for a
+  //     stationary sinusoid (all bins of its main lobe reassign to one frequency), 1 for an impulse,
+  //     and scattered for noise. It is the mixed partial derivative of the STFT phase (plus one),
+  //     with which Nelson (2001, 2002) told line components from impulses; the closed form is that
+  //     of Auger, Chassande-Mottin & Flandrin (2012).
+  //  3. Each bin's power, weighted by exp(-(d f_hat / d f / 0.3)^2) and by its level above the local
+  //     noise floor (smoothstep from 3 to 15 dB), is moved to its reassigned frequency on the
+  //     display's log-frequency cells, spread linearly over the neighbouring cells.
+  //  4. The cell levels, in dB, follow these deposits with a short attack and a slightly longer
+  //     release (first-order, as in a level meter). Averaging in dB favours what is present frame
+  //     after frame; sporadic noise deposits barely rise above the floor.
+  // No quantity is carried from one frame to the next except the smoothed cell levels.
+  class LiveSpectrum {
+    constructor(sr, opts = {}) {
+      this.sr = sr;
+      const N = this.N = opts.N || nextPow2(Math.round(sr * (opts.frame || 0.085)));
+      this.H = opts.hop || Math.min(N >> 2, nextPow2(Math.round(sr * 0.004)));   // 256 samples at 44.1/48 kHz
+      const K = this.K = N / 2 + 1;
+      this.binHz = sr / N;
+      this.kmin = Math.max(4, Math.ceil((opts.fmin || 25) / this.binHz));
+      this.kmax = Math.min(K - 5, Math.floor(Math.min(opts.fmax || 12500, 0.45 * sr) / this.binHz));
+      this.win = blackmanHarris(N); this.dwin = blackmanHarrisDeriv(N);
+      this.twin = new Float64Array(N); this.tdwin = new Float64Array(N);
+      let s2 = 0;
+      for (let n = 0; n < N; n++) { const t = n - N / 2; this.twin[n] = t * this.win[n]; this.tdwin[n] = t * this.dwin[n]; s2 += this.win[n] * this.win[n]; }
+      this.cal = 4 / (N * s2);                       // summed lobe power -> sinusoid amplitude^2
+      this.fft = new RealFFT(N);
+      this.buf = new Float64Array(N);
+      const A = () => new Float64Array(K);
+      this.Xr = A(); this.Xi = A(); this.Dr = A(); this.Di = A(); this.Tr = A(); this.Ti = A(); this.TDr = A(); this.TDi = A();
+      this.P = A(); this.fl = A();
+      this.sigma = opts.sigma || 0.3;
+      this.useCoherence = opts.coherence !== false; this.useSnr = opts.snrGate !== false;   // both on; off only for evaluation
+      // noise-floor bands (1/3 octave, at least 32 bins)
+      this.bands = [];
+      for (let k0 = this.kmin; k0 <= this.kmax;) {
+        const w = Math.max(32, Math.round(k0 * (Math.pow(2, 1 / 3) - 1))), k1 = Math.min(this.kmax + 1, k0 + w);
+        this.bands.push([k0, k1, (k0 + k1 - 1) / 2]); k0 = k1;
+      }
+      this.tmp = new Float64Array(N); this.bandFl = new Float64Array(this.bands.length);
+      // display cells
+      this.f0 = opts.f0; this.cellCents = opts.cellCents || 2; this.nC = opts.nCells;
+      this.inv = 1200 / this.cellCents;
+      this.c0 = Math.max(0, Math.floor(Math.log2(this.kmin * this.binHz / this.f0) * this.inv) - 2);
+      this.c1 = Math.min(this.nC - 1, Math.ceil(Math.log2(this.kmax * this.binHz / this.f0) * this.inv) + 2);
+      this.v0 = this.c0; this.v1 = this.c1;          // cells on view: the top level and the peaks are taken there
+      this.dep = new Float64Array(this.nC); this.depN = new Float64Array(this.nC);
+      this.L = new Float32Array(this.nC);            // smoothed level, dB (amplitude^2 re full scale)
+      this.num = new Float64Array(this.nC); this.den = new Float64Array(this.nC);   // for frequency read-out
+      this.floorRange = opts.floorRange || 85;       // levels are held no lower than top - floorRange
+      this.topMin = opts.topMin != null ? opts.topMin : -50;
+      this.setTimes(opts.attack || 0.02, opts.release || 0.07);
+      this.reset();
+    }
+    setTimes(attack, release) {
+      const dt = this.H / this.sr;
+      this.attack = attack; this.release = release;
+      this.aA = 1 - Math.exp(-dt / attack); this.aR = 1 - Math.exp(-dt / release);
+    }
+    setView(c0, c1) { this.v0 = Math.max(this.c0, c0); this.v1 = Math.min(this.c1, c1); }
+    reset() { this.top = -300; this.L.fill(-300); this.num.fill(0); this.den.fill(0); this.frames = 0; }
+    spectrum(x, start, w, re, im) {
+      const N = this.N, b = this.buf, L = x.length;
+      for (let n = 0; n < N; n++) { const j = start + n; b[n] = (j >= 0 && j < L) ? x[j] * w[n] : 0; }
+      this.fft.forward(b, re, im);
+    }
+    // Analyse the frame x[start .. start+N) and update the display levels.
+    frame(x, start) {
+      this.spectrum(x, start, this.win, this.Xr, this.Xi);
+      this.spectrum(x, start, this.dwin, this.Dr, this.Di);
+      this.spectrum(x, start, this.twin, this.Tr, this.Ti);
+      this.spectrum(x, start, this.tdwin, this.TDr, this.TDi);
+      const { Xr, Xi, Dr, Di, Tr, Ti, TDr, TDi, P, fl, kmin, kmax, bands } = this;
+      for (let k = kmin; k <= kmax; k++) P[k] = Xr[k] * Xr[k] + Xi[k] * Xi[k];
+      // local noise floor: median power in each band (median of an exponential variate = ln 2 x mean)
+      const tmp = this.tmp, bf = this.bandFl;
+      for (let i = 0; i < bands.length; i++) {
+        const [a, b] = bands[i], t = tmp.subarray(0, b - a);
+        for (let k = a; k < b; k++) t[k - a] = P[k];
+        t.sort(); bf[i] = Math.log(t[(b - a) >> 1] / Math.LN2 + 1e-40);
+      }
+      for (let k = kmin, i = 0; k <= kmax; k++) {
+        while (i < bands.length - 1 && bands[i + 1][2] <= k) i++;
+        let v;
+        if (k <= bands[0][2] || i >= bands.length - 1) v = bf[Math.min(i, bands.length - 1)];
+        else { const u = (k - bands[i][2]) / (bands[i + 1][2] - bands[i][2]); v = bf[i] * (1 - u) + bf[i + 1] * u; }
+        fl[k] = Math.exp(v);
+      }
+      // deposit weighted power at the reassigned frequencies
+      const dep = this.dep, depN = this.depN, c0 = this.c0, c1 = this.c1;
+      for (let c = c0; c <= c1; c++) { dep[c] = 0; depN[c] = 0; }
+      const rs = this.N / TWO_PI, bin = this.binHz, lim = 3.5 * bin, is2 = 1 / (this.sigma * this.sigma), cal = this.cal;
+      for (let k = kmin; k <= kmax; k++) {
+        const p = P[k]; if (!(p > 0)) continue;
+        const snr = this.useSnr ? 10 * Math.log10(p / (fl[k] + 1e-40)) : 99;
+        if (snr <= 3) continue;
+        const xr = Xr[k], xi = Xi[k];
+        const dr = (Dr[k] * xr + Di[k] * xi) / p, di = (Di[k] * xr - Dr[k] * xi) / p;       // X_dh / X_h
+        const f = (k - rs * di) * bin;
+        if (!(f > 0) || Math.abs(f - k * bin) > lim) continue;
+        const tr = (Tr[k] * xr + Ti[k] * xi) / p, ti = (Ti[k] * xr - Tr[k] * xi) / p;       // X_th / X_h
+        const m = 1 + (TDr[k] * xr + TDi[k] * xi) / p - (dr * tr - di * ti);              // d f_hat / d f
+        const w = (this.useCoherence ? Math.exp(-m * m * is2) : 1) * smoothstep(snr, 3, 15);
+        if (w < 1e-3) continue;
+        const pos = Math.log2(f / this.f0) * this.inv, e = p * w * cal;
+        // triangular spread over the neighbouring cells, centred on the continuous position
+        const j0 = Math.floor(pos);
+        for (let j = j0 - 1; j <= j0 + 2; j++) {
+          const t = 1 - Math.abs(j - pos) / 2; if (t <= 0 || j < c0 || j > c1) continue;
+          dep[j] += 0.5 * t * e; depN[j] += 0.5 * t * e * pos;
+        }
+      }
+      // smoothed levels in dB, held no lower than a floor below the tracked top
+      let mx = -300;
+      for (let c = this.v0; c <= this.v1; c++) if (dep[c] > 0) { const d = 10 * Math.log10(dep[c]); if (d > mx) mx = d; }
+      this.top = Math.max(mx, this.top - 3 * this.H / this.sr, this.topMin);
+      const floor = this.top - this.floorRange, L = this.L, aA = this.aA, aR = this.aR, num = this.num, den = this.den;
+      for (let c = c0; c <= c1; c++) {
+        const x = dep[c] > 0 ? Math.max(floor, 10 * Math.log10(dep[c])) : floor;
+        const y = L[c] < floor - 20 ? floor - 20 : L[c];
+        L[c] = y + (x > y ? aA : aR) * (x - y);
+        num[c] += aR * (depN[c] - num[c]); den[c] += aR * (dep[c] - den[c]);
+      }
+      this.frames++;
+    }
+    // display power (amplitude^2) per cell
+    power(out) {
+      out.fill(0);
+      for (let c = this.c0; c <= this.c1; c++) out[c] = Math.pow(10, this.L[c] / 10);
+      return out;
+    }
+    // the strongest peaks of the display: [{f, level (dB), rel (dB re strongest)}], sorted by frequency
+    peaks(dynDb = 60, maxN = 40, minSep = 6) {
+      const L = this.L, c0 = Math.max(this.c0 + minSep, this.v0), c1 = Math.min(this.c1 - minSep, this.v1), floor = this.top - this.floorRange;
+      let mx = -300; for (let c = c0; c <= c1; c++) if (L[c] > mx) mx = L[c];
+      const lo = Math.max(mx - dynDb, floor + 12), out = [];
+      for (let c = c0; c <= c1; c++) {
+        const v = L[c]; if (v < lo) continue;
+        let isMax = true;
+        for (let j = 1; j <= minSep && isMax; j++) if (L[c - j] >= v || L[c + j] > v) isMax = false;
+        if (!isMax) continue;
+        let n = 0, d = 0; for (let j = c - 4; j <= c + 4; j++) { n += this.num[j]; d += this.den[j]; }
+        const pos = d > 0 ? n / d : c;
+        out.push({ f: this.f0 * Math.pow(2, (Math.abs(pos - c) < 4 ? pos : c) / this.inv), level: v, rel: v - mx });
+      }
+      out.sort((a, b) => b.level - a.level);
+      return out.slice(0, maxN).sort((a, b) => a.f - b.f);
     }
   }
 
@@ -1069,7 +1238,7 @@ tr.rej td.note { font-weight: 500; }
     return cands;
   }
 
-  const api = { noteInfo, RealFFT, blackmanHarris, FrameAnalyzer, OnsetDetector, trackFrames, analyzeWindow, finishWindow,
+  const api = { noteInfo, RealFFT, blackmanHarris, FrameAnalyzer, LiveSpectrum, OnsetDetector, trackFrames, analyzeWindow, finishWindow,
                 zoomSpectrum, zoomPeaks, refineTones, markBackground, quietFrames, windowLevel, confOf,
                 scoreWindow, analyzeSignal, findCandidates, windowOpts, toneStats, nextPow2, median, smoothstep };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.OSCore = api;
@@ -1087,9 +1256,11 @@ const CELL_CENTS = 2, CPO = 1200 / CELL_CENTS;                 // cells per octa
 const F0 = 440 * Math.pow(2, (24 - 69) / 12);                    // C1 at A4 = 440 (fixed analysis grid)
 const NCELLS = 9 * CPO;                                          // C1 .. C10
 const RES = { fast: 0.085, std: 0.17, fine: 0.34 };
+const OFRAME = { short: 0.04, medium: 0.08, long: 0.16 };                          // Observe: frame length (s, rounded up to 2^n samples)
+const OSMOOTH = { fast: [0.008, 0.03], medium: [0.015, 0.06], steady: [0.04, 0.17] }; // Observe: attack, release (s)
 
 /* ---------------- settings ---------------- */
-const DEF = { a4: 440, thr: 70, dyn: 60, minDur: 1, win: 5, res: 'std', low: 2, oct: 7, range: 60, lobe: 22, mode: 'mean', spell: 'sharp', bg: 'dark', ovLabels: 'notes' };
+const DEF = { app: 'measure', oFrame: 'medium', oSmooth: 'medium', a4: 440, thr: 70, dyn: 60, minDur: 1, win: 5, res: 'std', low: 2, oct: 7, range: 60, lobe: 22, mode: 'mean', spell: 'sharp', bg: 'dark', ovLabels: 'notes' };
 const S = Object.assign({}, DEF);
 try { Object.assign(S, JSON.parse(localStorage.getItem('overtone-spiral-settings') || localStorage.getItem('overtone-spiral-settings') || '{}')); } catch (e) {}
 function saveSettings() { try { localStorage.setItem('overtone-spiral-settings', JSON.stringify(S)); } catch (e) {} }
@@ -1102,7 +1273,9 @@ const st = {
   showRejected: false, busy: false,
   live: new Float64Array(NCELLS), liveTop: -200, view: 'result',
   play: null, mic: null, micView: 'best', shown: null, micSpiral: 'live',
+  obs: { ls: null, key: '', pow: new Float64Array(NCELLS), peaks: [], top: -50, has: false, t: null, hold: null, next: 0, listAt: 0 },
 };
+const observing = () => S.app === 'observe';
 
 /* ---------------- helpers ---------------- */
 const fmt = (v, d) => (v < 0 ? '−' : '') + Math.abs(v).toFixed(d);
@@ -1366,6 +1539,17 @@ function displayPower(cells, res) {
 function renderSpiral() {
   spiralG.setTransform(dpr, 0, 0, dpr, 0, 0);
   let tones = [];
+  if (observing()) {
+    const o = st.obs, src = o.hold || o;
+    if (o.has && st.source) {
+      toHeights(src.pow, heights, S.range, src.top);
+      const q = hlTone != null ? src.peaks[hlTone - 1] : null;
+      if (q) tones = [{ f: q.f, n: hlTone, label: noteOf(q.f).str }];
+    } else heights.fill(0);
+    hits = [];
+    drawSpiral(spiralG, spiralSize, { heights, tones, theme: 'dark', scale: 1, hl: hlTone, overlays: shownBowls(), hits });
+    return;
+  }
   if (st.source === 'mic' && st.mic) st.view = st.micSpiral === 'capture' && st.cells ? 'result' : 'live';
   if (st.view === 'live') {
     st.liveTop = Math.max(toHeights(st.live, heights, S.range, null), st.liveTop - 0.05, -50);
@@ -1447,7 +1631,32 @@ function seenCount(t) {
   for (const c of caps) if (c.result.tones.some(u => u.conf >= S.thr / 100 && near(u))) k++;
   return k + '/' + caps.length;
 }
+const HEAD = { measure: ['#', 'Note', 'Frequency', 'Level', 'Confidence'], observe: ['#', 'Note', 'Frequency', 'Level'] };
+function setTableHead(k) {
+  const tr = $('#toneTable thead tr'); if (tr.dataset.k === k) return;
+  tr.dataset.k = k; tr.innerHTML = HEAD[k].map(h => `<th>${h}</th>`).join('');
+}
+function renderObsTable() {
+  setTableHead('observe');
+  const body = $('#toneBody'); body.textContent = '';
+  const o = st.obs, P = o.has ? (o.hold || o).peaks : [];
+  $('#countTxt').textContent = P.length ? P.length + (P.length === 1 ? ' partial' : ' partials') : '';
+  $('#rejBtn').textContent = '';
+  const empty = $('#emptyTxt');
+  empty.hidden = P.length > 0;
+  empty.textContent = !st.source ? 'Start the microphone, or open a recording, to watch its spectrum in real time.' : st.mic ? 'Listening. Nothing is sounding within the display range yet.' : 'Nothing is sounding within the display range at this moment.';
+  P.forEach((t, i) => {
+    const ni = noteOf(t.f), cents = (ni.centsInt < 0 ? '-' : '+') + Math.abs(ni.centsInt);
+    const tr = document.createElement('tr'); tr.className = 'tone'; tr.dataset.n = i + 1;
+    tr.innerHTML = `<td class="idx">${i + 1}</td><td class="note">${ni.name}${ni.octave}<span class="c">${cents}</span></td><td class="hz">${t.f.toFixed(1)} Hz</td>` +
+      (t.aud ? `<td class="lv" title="${audTip(t)}"><span class="lvv" style="color:${t.aud.cat.color}">${fmt(t.rel, 1)} dB</span><small class="aud" style="color:${t.aud.cat.color}">${t.aud.cat.key}</small></td>` : `<td class="lv">${fmt(t.rel, 1)} dB</td>`);
+    body.appendChild(tr);
+  });
+  $('#refTxt').textContent = st.source ? `A4 = ${(+S.a4).toFixed(2)} Hz · 12-TET · levels re the strongest partial now` : '';
+}
 function renderTable() {
+  if (observing()) return renderObsTable();
+  setTableHead('measure');
   const body = $('#toneBody'); body.textContent = '';
   const res = st.result;
   const empty = $('#emptyTxt');
@@ -1497,9 +1706,19 @@ function windowText() {
   if (s.kind === 'onset') return `Attack detected at <b>${s.onset.toFixed(2)} s</b>; measured on the free ring-out <b>${t0.toFixed(2)}–${t1.toFixed(2)} s</b>, chosen automatically as the window with the most confident partials.`;
   return `No clear attack; the stretch whose partials are measured best, <b>${t0.toFixed(2)}–${t1.toFixed(2)} s</b>, was chosen automatically.`;
 }
+function observeText() {
+  const held = st.obs.hold ? ' <b>Held</b>: press Hold again to resume.' : '';
+  if (st.mic) return 'Real-time view of the microphone: the partials sounding now. Nothing is measured or captured in this mode.' + held;
+  if (st.play) return 'Real-time view of the playback.' + held;
+  if (st.source === 'file' && st.obs.t != null) return `The spectrum as heard at <b>${st.obs.t.toFixed(2)} s</b>. Click or drag on the timeline to look at another moment; the space bar plays from there.`;
+  if (st.source === 'mic') return 'Real-time view of the microphone, as it was when the microphone was switched off.';
+  return 'Real-time view. Start the microphone, or open a recording and play it.';
+}
 function renderLedgerHead() {
-  $('#whyTxt').innerHTML = windowText();
+  const h2 = $('#countTxt').parentNode; h2.firstChild.nodeValue = observing() ? 'Sounding now ' : 'Partials ';
+  $('#whyTxt').innerHTML = observing() ? observeText() : windowText();
   const tools = $('#ledgerTools'); tools.textContent = '';
+  if (observing()) return;
   if (st.source === 'file' && st.sel && st.sel.manual) {
     const b = document.createElement('button'); b.className = 'link'; b.textContent = 'Back to automatic window';
     b.onclick = () => chooseBest(); tools.appendChild(b);
@@ -1517,6 +1736,15 @@ function renderLedgerHead() {
 }
 function updateHud() {
   const h = $('#hud');
+  if (observing()) {
+    const fr = st.obs.ls ? ` · ${(1000 * st.obs.ls.N / st.obs.ls.sr).toFixed(0)} ms frames` : '';
+    const held = st.obs.hold ? ' · <strong>held</strong>' : '';
+    if (st.mic) h.innerHTML = `<strong>Observe</strong> · microphone · ${(st.mic.sr / 1000).toFixed(1)} kHz${fr}${held}`;
+    else if (st.play) h.innerHTML = `<strong>Observe</strong> · playback · ${(st.play.pos || 0).toFixed(2)} s${held}`;
+    else if (st.source === 'file' && st.obs.t != null) h.innerHTML = `<strong>Observe</strong> · ${st.obs.t.toFixed(2)} s${fr}`;
+    else h.innerHTML = st.source ? '<strong>Observe</strong>' : '';
+    return;
+  }
   if (st.play) h.innerHTML = `<strong>Playback</strong> · ${(st.play.pos || 0).toFixed(2)} s · live spectrum`;
   else if (st.source === 'mic' && st.mic && st.view === 'result' && st.shown) h.innerHTML = `<strong>Capture</strong> ${st.shown.t0.toFixed(1)}–${st.shown.t1.toFixed(1)} s · partials at peak level` + (st.mic.pending ? ' · <strong>capturing</strong>' : '');
   else if (st.source === 'mic' && st.mic) h.innerHTML = `<strong>Live</strong> · microphone · ${(st.mic.sr / 1000).toFixed(1)} kHz` + (st.mic.pending ? ' · <strong>capturing</strong>' : '');
@@ -1554,8 +1782,9 @@ function drawTimeline() {
   if (!st.source) {
     g.textAlign = 'center'; g.textBaseline = 'middle';
     const maxW = tlW - 32, f1 = '13px "Hanken Grotesk", system-ui, sans-serif', f2 = '12px "Hanken Grotesk", system-ui, sans-serif';
-    const l1 = wrapLines(g, st.busy ? 'Analysing…' : 'Open a recording (or drop one anywhere on the page), or start the microphone and strike the bowl.', f1, maxW);
-    const l2 = st.busy ? [] : wrapLines(g, 'The recording’s timeline and the analysed window then appear here.', f2, maxW);
+    const obs = observing();
+    const l1 = wrapLines(g, st.busy ? 'Analysing…' : obs ? 'Open a recording (or drop one anywhere on the page), or start the microphone and play.' : 'Open a recording (or drop one anywhere on the page), or start the microphone and strike the bowl.', f1, maxW);
+    const l2 = st.busy ? [] : wrapLines(g, obs ? 'The recording’s timeline then appears here; click it to look at any moment.' : 'The recording’s timeline and the analysed window then appear here.', f2, maxW);
     const lh1 = 17, lh2 = 16, gap = l2.length ? 6 : 0, hTot = l1.length * lh1 + gap + l2.length * lh2;
     let y = tlH / 2 - hTot / 2 + lh1 / 2;
     g.fillStyle = '#8f94a7'; g.font = f1; for (const L of l1) { g.fillText(L, tlW / 2, y); y += lh1; }
@@ -1601,6 +1830,7 @@ function drawTimeline() {
       g.beginPath(); g.moveTo(x - 4, y0 - 9); g.lineTo(x + 4, y0 - 9); g.lineTo(x, y0 - 3); g.closePath(); g.fill();
     }
     const sel = tlDrag ? tlDrag.sel : st.sel;
+    if (observing()) g.globalAlpha = 0.35;              // the measured window, for reference
     if (sel) {
       const hs = st.ctx.hopSec, w = st.ctx.winSec;
       const xa = tX(sel.a * hs), xb = tX(sel.b * hs + w);
@@ -1611,8 +1841,13 @@ function drawTimeline() {
       const lab = `${(sel.a * hs).toFixed(2)}–${(sel.b * hs + w).toFixed(2)} s`;
       g.fillText(lab, Math.min(xa + 4, tlW - TL.padR - g.measureText(lab).width), y0 - 12);
     }
+    g.globalAlpha = 1;
+    if (observing() && !st.play && st.obs.t != null) {
+      const x = tX(st.obs.t); g.strokeStyle = '#9fe6dc'; g.lineWidth = 1.5; g.beginPath(); g.moveTo(x, y0 - 4); g.lineTo(x, y1); g.stroke();
+      g.fillStyle = '#9fe6dc'; g.beginPath(); g.moveTo(x - 5, y0 - 10); g.lineTo(x + 5, y0 - 10); g.lineTo(x, y0 - 4); g.closePath(); g.fill();
+    }
   }
-  if (st.source === 'mic' && st.mic) {
+  if (st.source === 'mic' && st.mic && !observing()) {
     g.save(); g.beginPath(); g.rect(TL.padL, 0, tlW - TL.padL - TL.padR, tlH); g.clip();
     for (const c of st.mic.captures) {
       const xa = tX(c.t0), xb = tX(c.t1); if (xb < TL.padL) continue;
@@ -1629,11 +1864,19 @@ function drawTimeline() {
     g.restore();
   }
   if (st.play) { const x = tX(st.play.pos); g.strokeStyle = '#ebe6dc'; g.lineWidth = 1.2; g.beginPath(); g.moveTo(x, y0 - 4); g.lineTo(x, y1); g.stroke(); }
-  $('#tlHint').textContent = st.source === 'file' && st.ctx ? 'drag to choose a window · ▲ attack' : st.source === 'mic' ? 'last 30 s · boxes are captures, click one to view it' : '';
+  $('#tlHint').textContent = observing() ? (st.source === 'file' && st.x ? 'click or drag to look at any moment · space plays from there' : st.mic ? 'last 30 s' : '')
+    : st.source === 'file' && st.ctx ? 'drag to choose a window · ▲ attack' : st.source === 'mic' ? 'last 30 s · boxes are captures, click one to view it' : '';
 }
 function tlFrame(t) { return Math.max(0, Math.min(st.ctx.nFrames - 1, Math.round(t / st.ctx.hopSec))); }
+let tlScrub = false;
+function scrubTo(x) { st.obs.want = Math.max(0, Math.min(st.dur, xT(x))); }
 tlCv.addEventListener('pointerdown', e => {
   const r = tlCv.getBoundingClientRect(), x = e.clientX - r.left;
+  if (observing()) {
+    if (st.source !== 'file' || !st.x || st.busy) return;
+    if (st.play) { startPlay(Math.max(0, Math.min(st.dur - 0.05, xT(x))), st.dur); return; }   // seek
+    tlScrub = true; tlCv.setPointerCapture(e.pointerId); scrubTo(x); return;
+  }
   if (st.source === 'mic' && st.mic) {
     const t = xT(x); const c = st.mic.captures.find(c => t >= c.t0 && t <= c.t1);
     if (c) { st.mic.pick = c; showMicCapture(); setMicSpiral('capture'); }
@@ -1649,6 +1892,7 @@ tlCv.addEventListener('pointerdown', e => {
 });
 tlCv.addEventListener('pointermove', e => {
   const r = tlCv.getBoundingClientRect(), x = e.clientX - r.left;
+  if (observing()) { tlCv.style.cursor = st.source === 'file' && st.x ? 'col-resize' : 'default'; if (tlScrub) scrubTo(x); return; }
   if (!tlDrag) {
     if (st.source === 'file' && st.sel && st.ctx) { const hs = st.ctx.hopSec; const xa = tX(st.sel.a * hs), xb = tX(st.sel.b * hs + st.ctx.winSec); tlCv.style.cursor = (Math.abs(x - xa) < 7 || Math.abs(x - xb) < 7) ? 'ew-resize' : (x > xa && x < xb ? 'grab' : 'crosshair'); }
     else tlCv.style.cursor = st.source === 'mic' ? 'pointer' : 'default';
@@ -1663,8 +1907,9 @@ tlCv.addEventListener('pointermove', e => {
   else { const f0 = tlFrame(xT(tlDrag.x0)), f1 = tlFrame(xT(x)); a = Math.min(f0, f1); b = Math.max(f0, f1) - wf; if (b < a + minF) b = a + minF; b = Math.min(n, b); }
   tlDrag.sel = { a, b }; tlDirty = true;
 });
-tlCv.addEventListener('pointercancel', () => { if (tlDrag) { tlDrag = null; tlDirty = true; } });   // the page took the gesture (scrolling)
+tlCv.addEventListener('pointercancel', () => { tlScrub = false; if (tlDrag) { tlDrag = null; tlDirty = true; } });   // the page took the gesture (scrolling)
 tlCv.addEventListener('pointerup', () => {
+  tlScrub = false;
   if (!tlDrag) return;
   const s = tlDrag.sel, moved = s.a !== tlDrag.s0.a || s.b !== tlDrag.s0.b;
   tlDrag = null; tlDirty = true;
@@ -1689,6 +1934,7 @@ async function loadBuffer(name, arrayBuf) {
   const n = ab.length, ch = ab.numberOfChannels, x = new Float32Array(n);
   for (let c = 0; c < ch; c++) { const d = ab.getChannelData(c); for (let i = 0; i < n; i++) x[i] += d[i] / ch; }
   st.source = 'file'; st.name = name; st.sr = ab.sampleRate; st.x = x; st.dur = n / ab.sampleRate; st.pbuf = ab;
+  obsClear();
   $('#srcLabel').textContent = `${name} · ${st.dur.toFixed(1)} s · ${(st.sr / 1000).toFixed(1)} kHz${ch > 1 ? ' · ' + ch + ' ch mixed' : ''}`;
   await analyseFile();
 }
@@ -1701,6 +1947,7 @@ async function analyseFile() {
   st.ctx.ms = performance.now() - t0;
   setBusy(false);
   await chooseBest();
+  if (observing() && st.source === 'file') obsAt(st.obs.t != null ? Math.min(st.obs.t, st.dur) : defaultObsT());
 }
 async function reselect() {
   if (!st.ctx) return;
@@ -1740,12 +1987,76 @@ async function setSelection(sel) {
 }
 function refreshAll() {
   renderTable(); renderLedgerHead(); updateHud(); dirty = true; tlDirty = true;
-  $('#scopeSeg').hidden = !(st.source === 'mic' && st.mic);
+  $('#scopeSeg').hidden = !(st.source === 'mic' && st.mic) || observing();
+  $('#holdBtn').hidden = !(observing() && (st.mic || st.play));
   refreshHint();
   const canPlay = st.source === 'file' && !!st.x;
   $('#playSelBtn').disabled = !canPlay || !st.sel; $('#playAllBtn').disabled = !canPlay;
   $('#playSelBtn').textContent = st.play ? '■ Stop' : '▶ Window'; $('#playAllBtn').textContent = st.play ? '■ Stop' : '▶ All';
 }
+
+/* =============================================================
+   Observe: the spectrum in real time (microphone, playback, or any moment of a recording)
+   ============================================================= */
+function obsSpectrum(sr) {
+  const o = st.obs, key = sr + ':' + S.oFrame;
+  if (!o.ls || o.key !== key) {
+    o.ls = new C.LiveSpectrum(sr, { frame: OFRAME[S.oFrame] || OFRAME.medium, fmin: 25, fmax: 12500, f0: F0, cellCents: CELL_CENTS, nCells: NCELLS });
+    o.key = key;
+  }
+  const [a, r] = OSMOOTH[S.oSmooth] || OSMOOTH.medium;
+  if (o.ls.attack !== a || o.ls.release !== r) o.ls.setTimes(a, r);
+  o.ls.floorRange = +S.range + 25;            // levels rest just below the display range
+  const fmin = S.a4 * Math.pow(2, (12 * (+S.low + 1) - 69) / 12);
+  o.ls.setView(Math.ceil(Math.log2(fmin / F0) * CPO), Math.floor(Math.log2(fmin * Math.pow(2, +S.oct) / F0) * CPO));   // cells on the spiral
+  return o.ls;
+}
+// copy the analyser's state to the display; the list of partials is refreshed four times a second
+function obsPublish(forceList) {
+  const o = st.obs, ls = o.ls; if (!ls) return;
+  ls.power(o.pow); o.top = ls.top; o.has = true; dirty = true;
+  const now = performance.now();
+  if (forceList || now - o.listAt > 250) {
+    o.listAt = now; o.peaks = ls.peaks(+S.dyn, 40); audibility(o.peaks);
+    if (!o.hold) renderTable();
+  }
+}
+// the display as it would look at time t of the recording (warmed up over the preceding frames)
+function obsAt(t) {
+  if (!st.x) return;
+  const ls = obsSpectrum(st.sr); ls.reset();
+  t = Math.max(0, Math.min(st.dur, t));
+  const end = Math.round(t * st.sr), warm = Math.round(Math.max(0.3, 5 * ls.release) * st.sr);
+  let s = end - ls.N - warm;
+  for (; s <= end - ls.N; s += ls.H) ls.frame(st.x, s);
+  st.obs.next = s; st.obs.t = t; obsPublish(true); updateHud(); renderLedgerHead(); tlDirty = true;
+}
+function defaultObsT() {
+  if (st.sel && st.ctx) { const hs = st.ctx.hopSec; return st.sel.kind === 'onset' && !st.sel.manual ? Math.min(st.dur, st.sel.onset + 0.6) : (st.sel.a * hs + st.sel.b * hs + st.ctx.winSec) / 2; }
+  return Math.min(st.dur, 1);
+}
+function obsClear() { const o = st.obs; o.has = false; o.peaks = []; o.hold = null; o.t = null; o.pow.fill(0); setHold(false); }
+function setHold(on) {
+  const o = st.obs;
+  o.hold = on && o.has ? { pow: Float64Array.from(o.pow), top: o.top, peaks: o.peaks.slice() } : null;
+  $('#holdBtn').setAttribute('aria-pressed', String(!!o.hold));
+  dirty = true; updateHud(); renderTable(); renderLedgerHead();
+}
+$('#holdBtn').onclick = () => setHold(!st.obs.hold);
+function setApp(m) {
+  if (m !== 'observe') m = 'measure';
+  $('#modeMeasure').setAttribute('aria-pressed', String(m === 'measure')); $('#modeObserve').setAttribute('aria-pressed', String(m === 'observe'));
+  if (S.app === m) return;
+  S.app = m; saveSettings();
+  hlTone = null; setHold(false);
+  if (st.mic) { st.mic.reconfigure(); obsClear(); if (m === 'measure') { st.view = 'live'; setMicSpiral('live'); showMicCapture(); } $('#chips').textContent = ''; }
+  if (st.play) { const p = st.play; startPlay(p.pos, p.t1); }        // carry on from the same place in the new mode
+  else if (m === 'observe' && st.source === 'file' && st.x) obsAt(st.obs.t != null ? st.obs.t : defaultObsT());
+  else if (st.source === 'file') st.view = 'result';
+  refreshAll();
+}
+$('#modeMeasure').onclick = () => setApp('measure');
+$('#modeObserve').onclick = () => setApp('observe');
 
 /* =============================================================
    Playback with live spiral
@@ -1755,7 +2066,10 @@ const liveFA = {};
 function stopPlay() {
   if (!st.play) return;
   try { st.play.src.onended = null; st.play.src.stop(); } catch (e) {}
-  st.play = null; st.view = 'result'; refreshAll();
+  const pos = st.play.pos;
+  st.play = null; st.view = 'result';
+  if (observing()) { st.obs.t = pos; setHold(false); if (st.obs.ls) obsPublish(true); }
+  refreshAll();
 }
 function startPlay(t0, t1) {
   if (!st.x || st.source !== 'file') return;
@@ -1767,12 +2081,21 @@ function startPlay(t0, t1) {
   src.start(0, t0, dur);
   st.play = { src, start: playCtx.currentTime, t0, t1, pos: t0 };
   src.onended = () => { if (st.play && st.play.src === src) stopPlay(); };
-  st.live.fill(0); st.liveTop = -200; st.view = 'live'; refreshAll();
+  st.live.fill(0); st.liveTop = -200; st.view = 'live';
+  if (observing()) { setHold(false); obsAt(t0); }
+  refreshAll();
 }
 const oneFrame = new Float64Array(NCELLS);
 function playTick() {
   const p = st.play; if (!p) return;
   p.pos = p.t0 + (playCtx.currentTime - p.start);
+  if (observing()) {
+    const ls = obsSpectrum(st.sr), o = st.obs, target = Math.min(st.x.length, Math.round(p.pos * st.sr));
+    if (target - (o.next + ls.N) > 0.5 * st.sr) obsAt(p.pos);           // fell far behind: start afresh
+    while (o.next + ls.N <= target) { ls.frame(st.x, o.next); o.next += ls.H; }
+    o.t = p.pos; obsPublish(false);
+    tlDirty = true; updateHud(); return;
+  }
   const o = frameOpts(st.sr); const key = st.sr + ':' + o.N;
   const fa = liveFA[key] || (liveFA[key] = new C.FrameAnalyzer(st.sr, o));
   const s = Math.round(p.pos * st.sr) - (fa.N >> 1);
@@ -1835,6 +2158,9 @@ class Mic {
     this.oneCells = new Float64Array(NCELLS);
     this.lastSustain = 0; this.lastLive = 0;
     this.pending = null;
+    // Observe mode: only the real-time spectrum runs (no attacks, captures or measurement frames)
+    this.observe = observing();
+    if (this.observe) { this.ls = obsSpectrum(this.sr); this.ls.reset(); this.obsNext = this.total; this.obsSeg = new Float32Array(this.ls.N); this.liveTones = []; }
   }
   reconfigure() { this.setup(); this.captures = []; this.best = null; this.pick = null; this.onsets = []; }
   push(chunk) {
@@ -1842,13 +2168,28 @@ class Mic {
     let w = this.total % R;
     for (let i = 0; i < n; i++) { this.ring[w++] = chunk[i]; if (w === R) w = 0; }
     this.total += n;
-    for (const o of this.od.push(chunk, 0, n)) this.onOnset(o);
-    // keep envelope bounded (~70 s)
-    const env = this.od.envelope, maxB = Math.ceil(70 * this.sr / this.od.block);
-    if (env.length > maxB + 2000) { env.splice(0, env.length - maxB); this.envOffset = Math.floor(this.total / this.od.block) - env.length; }
+    const ons = this.od.push(chunk, 0, n);
+    if (this.observe) { this.observeFrames(); this.trimEnvelope(); return; }
+    for (const o of ons) this.onOnset(o);
+    this.trimEnvelope();
     let did = false;
     while (this.next + this.N <= this.total) { this.processFrame(); did = true; }
     if (did) this.housekeeping();
+  }
+  trimEnvelope() {                        // keep the level envelope bounded (~70 s)
+    const env = this.od.envelope, maxB = Math.ceil(70 * this.sr / this.od.block);
+    if (env.length > maxB + 2000) { env.splice(0, env.length - maxB); this.envOffset = Math.floor(this.total / this.od.block) - env.length; }
+  }
+  observeFrames() {
+    const ls = (this.ls = obsSpectrum(this.sr)), N = ls.N, R = this.RING, seg = this.obsSeg.length === N ? this.obsSeg : (this.obsSeg = new Float32Array(N));
+    if (this.total - this.obsNext > R - N) this.obsNext = this.total - N;          // fell behind by more than the ring holds
+    let did = false;
+    while (this.obsNext + N <= this.total) {
+      let r = this.obsNext % R;
+      for (let i = 0; i < N; i++) { seg[i] = this.ring[r++]; if (r === R) r = 0; }
+      ls.frame(seg, 0); this.obsNext += ls.H; did = true;
+    }
+    if (did) obsPublish(false);
   }
   processFrame() {
     const s = this.next, R = this.RING, seg = this.seg;
@@ -1965,7 +2306,7 @@ class Mic {
 }
 function renderChips() {
   const el = $('#chips'); el.textContent = '';
-  if (!st.mic) return;
+  if (!st.mic || observing()) return;
   for (const t of st.mic.liveTones.slice(0, 12)) {
     const c = document.createElement('span'); c.className = 'chip'; c.style.setProperty('--c', (100 * t.conf).toFixed(0));
     c.innerHTML = `<i></i>${noteOf(t.f).str} · ${t.f.toFixed(1)} Hz`; el.appendChild(c);
@@ -1989,7 +2330,7 @@ function showMicCapture() {
   refreshAll();
 }
 async function startMic() {
-  stopPlay();
+  stopPlay(); obsClear();
   const m = new Mic();
   try { await m.start(); }
   catch (e) {
@@ -2012,7 +2353,8 @@ async function stopMic() {
   // keep the result on screen
   st.view = 'result'; st.mic = null; $('#chips').textContent = '';
   st.micStopped = { captures: m.captures, shown: st.shown };
-  $('#srcLabel').textContent = `Microphone session · ${m.captures.length} capture${m.captures.length === 1 ? '' : 's'}`;
+  $('#srcLabel').textContent = m.observe ? 'Microphone session' : `Microphone session · ${m.captures.length} capture${m.captures.length === 1 ? '' : 's'}`;
+  if (st.obs.hold) setHold(false);
   refreshAll();
 }
 $('#micBtn').onclick = () => (st.mic ? stopMic() : startMic());
@@ -2153,8 +2495,20 @@ function renderLib() {
   else note.textContent = lib.kind === 'db' ? 'Kept with your account in this page. Export makes a file copy.' : 'Kept in this browser. Export makes a file copy (back-up, or to move bowls to another device).';
   $('#saveBowlBtn').disabled = lib.kind === 'off';
 }
+// Observe mode: the partials sounding at the moment Save is pressed
+function bowlFromPeaks(name, snap) {
+  return {
+    id: newId(), name, color: nextColor(), created: new Date().toISOString(), source: snap.source, window: snap.desc, a4: +S.a4,
+    partials: snap.peaks.slice(0, 64).map(q => ({ f: r3(q.f, 2), rel: r3(q.rel, 1), conf: null, unc: null, dur: null, beat: null, partnerF: null, partnerRel: null })),
+  };
+}
 $('#saveBowlBtn').onclick = () => {
-  if (!st.result || !listTones(st.result).length) return toast('Measure a bowl first: open a recording, or strike it with the microphone on.');
+  if (observing()) {
+    const P = obsPeaks();
+    if (!P.length) return toast('Nothing is sounding to save: start the microphone, or open a recording.');
+    st.obs.saveSnap = { peaks: P.slice(), desc: obsMoment(), source: sourceDesc() };
+  } else st.obs.saveSnap = null;
+  if (!st.obs.saveSnap && (!st.result || !listTones(st.result).length)) return toast('Measure a bowl first: open a recording, or strike it with the microphone on.');
   const base = st.source === 'file' && st.name ? st.name.replace(/\.[a-z0-9]+$/i, '').replace(/[_]+/g, ' ') : 'Bowl ' + (lib.bowls.length + 1);
   $('#exportForm').hidden = true;
   $('#bowlName').value = base; $('#saveForm').hidden = false; $('#bowlName').focus(); $('#bowlName').select();
@@ -2162,9 +2516,11 @@ $('#saveBowlBtn').onclick = () => {
 $('#saveCancel').onclick = () => { $('#saveForm').hidden = true; };
 $('#saveForm').addEventListener('submit', async e => {
   e.preventDefault();
-  if (!st.result) return;
+  const snap = st.obs.saveSnap;
+  if (!snap && !st.result) return;
   const name = $('#bowlName').value.trim() || ('Bowl ' + (lib.bowls.length + 1));
-  const b = bowlFromResult(name);
+  const b = snap ? bowlFromPeaks(name, snap) : bowlFromResult(name);
+  st.obs.saveSnap = null;
   $('#saveForm').hidden = true;
   await libAdd(b);
   toast(`Saved “${name}” with ${b.partials.length} partials.`);
@@ -2262,7 +2618,13 @@ function baseName() {
   if (st.source === 'mic' || st.micStopped && !st.x) { const d = new Date(); const p = n => String(n).padStart(2, '0'); return `microphone_${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`; }
   return (st.name || 'audio').replace(/\.[a-z0-9]+$/i, '').replace(/[^\w\-]+/g, '_');
 }
+function obsMoment() {
+  if (st.source === 'file') return `real-time view at ${(st.play ? st.play.pos : st.obs.t || 0).toFixed(2)} s`;
+  const d = new Date(), p2 = n => String(n).padStart(2, '0');
+  return `real-time view of the microphone at ${p2(d.getHours())}:${p2(d.getMinutes())}:${p2(d.getSeconds())}`;
+}
 function windowDesc() {
+  if (observing()) return obsMoment();
   if (st.source === 'file' && st.sel) {
     const hs = st.ctx.hopSec, t0 = st.sel.a * hs, t1 = st.sel.b * hs + st.ctx.winSec;
     return `${t0.toFixed(2)}–${t1.toFixed(2)} s` + (st.sel.manual ? ' (chosen manually)' : st.sel.kind === 'onset' ? ` (automatic: ring-out after the attack at ${st.sel.onset.toFixed(2)} s)` : ' (automatic: best-measured stretch without an attack)');
@@ -2281,15 +2643,30 @@ function tableRow(n, f, ratio, rel, conf, unc, beat, partnerF, aud) {
   return padS(n, 3) + padS(noteOf(f).str, 10) + padS(f.toFixed(2), 16, true) + padS(ratio.toFixed(3), 9, true) + padS(num(rel, 1), 12, true) + padS(aud ? aud.cat.key : '-', 13, true)
     + padS(conf == null ? '-' : (100 * conf).toFixed(0) + ' %', 12, true) + padS(num(unc, 2), 10, true) + padS(beat ? (+beat).toFixed(2) : '-', 11, true) + padS(partnerF ? (+partnerF).toFixed(2) : '-', 14, true);
 }
+function obsPeaks() { return st.obs.has ? (st.obs.hold || st.obs).peaks : []; }
 function buildText() {
-  const tones = st.result ? listTones(st.result) : [];
+  const obs = observing();
+  const tones = !obs && st.result ? listTones(st.result) : [];
   const bowls = shownBowls();
   const L = [];
-  L.push('Overtone Spiral — dominant partials');
+  L.push('Overtone Spiral — ' + (obs ? 'partials sounding now' : 'dominant partials'));
   L.push('');
   L.push(`Reference:   A4 = ${(+S.a4).toFixed(2)} Hz, 12-tone equal temperament`);
   L.push('Exported:    ' + new Date().toLocaleString());
-  if (st.result) {
+  if (obs && st.obs.has) {
+    const P = obsPeaks();
+    L.push('');
+    L.push('Real-time view (Observe)');
+    L.push('Source:      ' + sourceDesc());
+    L.push('Moment:      ' + obsMoment());
+    L.push(`Shown:       peaks of the real-time spectrum within ${S.dyn} dB of the strongest`);
+    L.push('');
+    const hdr = padS('#', 3) + padS('Note', 10) + padS('Frequency (Hz)', 16, true) + padS('Level (dB)', 12, true) + padS('Audibility', 13, true);
+    L.push(hdr); L.push('-'.repeat(hdr.length));
+    P.forEach((t, i) => L.push(padS(i + 1, 3) + padS(noteOf(t.f).str, 10) + padS(t.f.toFixed(1), 16, true) + padS(t.rel.toFixed(1), 12, true) + padS(t.aud ? t.aud.cat.key : '-', 13, true)));
+    if (!P.length) L.push('(nothing sounding within the display range)');
+  }
+  if (!obs && st.result) {
     L.push('');
     L.push('Current measurement');
     L.push('Source:      ' + sourceDesc());
@@ -2311,6 +2688,7 @@ function buildText() {
     qs.forEach((q, i) => L.push(tableRow(i + 1, q.f, q.f / f1, q.rel, q.conf, q.unc, q.beat, q.partnerF, q.aud)));
   }
   L.push('');
+  if (obs) L.push('Real-time values follow the sound with a short smoothing time; for measured frequencies with uncertainties use Measure mode.');
   L.push('Note = equal-tempered note name, octave and deviation in cents (A4 = MIDI 69).');
   L.push('Ratio = frequency / lowest listed partial. Level = peak level in the window relative to the strongest partial.');
   L.push('Audibility = level corrected for the ear\'s sensitivity (ISO 226:2003 equal-loudness contour, 60 phon), relative to the most');
@@ -2321,18 +2699,19 @@ function buildText() {
   return L.join('\n') + '\n';
 }
 $('#txtBtn').onclick = () => {
-  if (!st.result && !shownBowls().length) return toast('Nothing to export yet: measure a bowl or show saved bowls.');
-  saveFile((st.result ? baseName() : 'saved-bowls') + '_partials.txt', buildText(), 'text/plain;charset=utf-8');
+  const cur = observing() ? st.obs.has : !!st.result;
+  if (!cur && !shownBowls().length) return toast(observing() ? 'Nothing to export yet: start the microphone or open a recording.' : 'Nothing to export yet: measure a bowl or show saved bowls.');
+  saveFile((cur ? baseName() + (observing() ? '_now' : '') : 'saved-bowls') + '_partials.txt', buildText(), 'text/plain;charset=utf-8');
 };
 function shade(hex, k) {            // darken a #rrggbb colour by factor k (0..1) for light backgrounds
   const v = [1, 3, 5].map(i => Math.round(parseInt(hex.slice(i, i + 2), 16) * (1 - k)));
   return '#' + v.map(x => x.toString(16).padStart(2, '0')).join('');
 }
 $('#pngBtn').onclick = async () => {
-  const bowls = shownBowls();
-  if (!st.result && !st.cells && !bowls.length) return toast('Nothing to export yet: measure a bowl or show saved bowls.');
+  const bowls = shownBowls(), obs = observing() && st.obs.has, osrc = st.obs.hold || st.obs;
+  if (!obs && !st.result && !st.cells && !bowls.length) return toast('Nothing to export yet: measure a bowl or show saved bowls.');
   const theme = S.bg, p = PAL[theme], W = 1800, scale = W / 700;
-  const tones = st.result ? listTones(st.result) : [];
+  const tones = obs ? osrc.peaks.map((q, i) => ({ f: q.f, n: i + 1, rel: q.rel })) : !observing() && st.result ? listTones(st.result) : [];
   const ovl = bowls.map(b => Object.assign({}, b, { color: theme === 'light' ? shade(b.color, 0.38) : b.color }));
   const cols = 2, rowH = 46, legH = ovl.length ? 70 + Math.ceil(ovl.length / cols) * rowH : 0;
   const foot = 60 + (tones.length ? 60 + Math.ceil(tones.length / cols) * rowH : 0) + legH, head = 150;
@@ -2342,16 +2721,17 @@ $('#pngBtn').onclick = async () => {
   g.save(); g.translate(0, head);
   const h = new Float32Array(NCELLS);
   geomCache = null; geomFor(W, scale);
-  if (st.cells) toHeights(displayPower(st.cells, st.result), h, S.range, null);
-  drawSpiral(g, W, { heights: st.cells ? h : null, tones: tones.map(t => ({ f: t.f, n: t.n, label: noteOf(t.f).str })), theme, scale, overlays: ovl });
+  if (obs) toHeights(osrc.pow, h, S.range, osrc.top);
+  else if (st.cells && !observing()) toHeights(displayPower(st.cells, st.result), h, S.range, null);
+  drawSpiral(g, W, { heights: obs || (st.cells && !observing()) ? h : null, tones: obs ? [] : tones.map(t => ({ f: t.f, n: t.n, label: noteOf(t.f).str })), theme, scale, overlays: ovl });
   g.restore(); geomCache = null;
   g.textBaseline = 'alphabetic'; g.textAlign = 'left';
   g.fillStyle = p.label; g.font = 'italic 500 58px Spectral, Georgia, serif'; g.fillText('Overtone Spiral', 70, 92);
   g.fillStyle = p.dim; g.font = '26px "Azeret Mono", Menlo, monospace';
-  g.fillText((st.result ? `${sourceDesc()} · ${windowDesc()}` : `${ovl.length} saved bowl${ovl.length === 1 ? '' : 's'}`).slice(0, 110), 72, 132);
+  g.fillText((obs || (!observing() && st.result) ? `${sourceDesc()} · ${windowDesc()}` : `${ovl.length} saved bowl${ovl.length === 1 ? '' : 's'}`).slice(0, 110), 72, 132);
   let y = head + W + 50;
   g.fillStyle = p.dim; g.font = '24px "Azeret Mono", Menlo, monospace';
-  g.fillText(`A4 = ${(+S.a4).toFixed(2)} Hz · 12-TET` + (st.result ? ` · partials with confidence ≥ ${S.thr} %` : ''), 72, y);
+  g.fillText(`A4 = ${(+S.a4).toFixed(2)} Hz · 12-TET` + (obs ? ' · partials sounding at this moment, level re the strongest' : !observing() && st.result ? ` · partials with confidence ≥ ${S.thr} %` : ''), 72, y);
   y += 56;
   const colW = (W - 144) / cols;
   tones.forEach((t, i) => {
@@ -2359,7 +2739,8 @@ $('#pngBtn').onclick = async () => {
     const ni = noteOf(t.f);
     g.fillStyle = p.marker; g.font = '500 26px "Azeret Mono", Menlo, monospace'; g.fillText(String(t.n), x, yy);
     g.fillStyle = p.label; g.font = '600 32px Spectral, Georgia, serif'; g.fillText(ni.str, x + 50, yy);
-    g.fillStyle = p.dim; g.font = '24px "Azeret Mono", Menlo, monospace'; g.fillText(`${t.f.toFixed(2)} Hz  ×${t.ratio.toFixed(3)}  ${(100 * t.conf).toFixed(0)}%${t.beat ? '  beats ' + t.beat.toFixed(2) + ' Hz' : ''}`, x + 210, yy);
+    g.fillStyle = p.dim; g.font = '24px "Azeret Mono", Menlo, monospace';
+    g.fillText(obs ? `${t.f.toFixed(1)} Hz  ${fmt(t.rel, 1)} dB` : `${t.f.toFixed(2)} Hz  ×${t.ratio.toFixed(3)}  ${(100 * t.conf).toFixed(0)}%${t.beat ? '  beats ' + t.beat.toFixed(2) + ' Hz' : ''}`, x + 210, yy);
   });
   if (tones.length) y += Math.ceil(tones.length / cols) * rowH + 20;
   if (ovl.length) {
@@ -2374,13 +2755,13 @@ $('#pngBtn').onclick = async () => {
   }
   dirty = true;
   const blob = await new Promise(r => cv.toBlob(r, 'image/png'));
-  saveFile((st.result ? baseName() : 'saved-bowls') + '_spiral.png', blob, 'image/png');
+  saveFile((obs ? baseName() + '_now' : !observing() && st.result ? baseName() : 'saved-bowls') + '_spiral.png', blob, 'image/png');
 };
 
 /* =============================================================
    Settings
    ============================================================= */
-const F = { sA4: 'a4', sThr: 'thr', sDyn: 'dyn', sMinDur: 'minDur', sWin: 'win', sRes: 'res', sLow: 'low', sOct: 'oct', sRange: 'range', sLobe: 'lobe', sMode: 'mode', sSpell: 'spell', sBg: 'bg', sOvl: 'ovLabels' };
+const F = { sOFrame: 'oFrame', sOSmooth: 'oSmooth', sA4: 'a4', sThr: 'thr', sDyn: 'dyn', sMinDur: 'minDur', sWin: 'win', sRes: 'res', sLow: 'low', sOct: 'oct', sRange: 'range', sLobe: 'lobe', sMode: 'mode', sSpell: 'spell', sBg: 'bg', sOvl: 'ovLabels' };
 const OUT = { sThr: v => v + ' %', sDyn: v => '−' + v + ' dB', sMinDur: v => (+v > 0 ? (+v).toFixed(1) + ' s' : 'off'), sWin: v => v + ' s', sRange: v => v + ' dB', sLobe: v => v + ' ¢' };
 function syncSettingsUI() {
   for (const [id, k] of Object.entries(F)) { const el = document.getElementById(id); el.value = S[k]; const o = document.getElementById('o' + id.slice(1)); if (o && OUT[id]) o.textContent = OUT[id](S[k]); }
@@ -2400,7 +2781,12 @@ for (const [id, k] of Object.entries(F)) {
     } else if (k === 'res') {
       if (st.source === 'file') analyseFile(); else if (st.mic) { st.mic.reconfigure(); showMicCapture(); }
     } else if (k === 'mode') { if (st.source === 'file' && st.sel) setSelection(st.sel); }
+    else if (k === 'oFrame' || k === 'oSmooth' || k === 'range' || k === 'low' || k === 'oct') { /* below */ }
     else { renderTable(); renderLedgerHead(); }
+    if (observing() && ['oFrame', 'oSmooth', 'range', 'low', 'oct', 'a4', 'dyn'].includes(k)) {
+      if (st.source === 'file' && st.x) obsAt(st.play ? st.play.pos : st.obs.t != null ? st.obs.t : defaultObsT());
+      else if (st.mic) { obsSpectrum(st.mic.sr); updateHud(); }
+    }
   });
 }
 $('#setBtn').onclick = () => { const p = $('#settings'); p.hidden = !p.hidden; $('#setBtn').setAttribute('aria-expanded', String(!p.hidden)); };
@@ -2418,7 +2804,13 @@ window.addEventListener('dragleave', () => { if (--dragN <= 0) { dragN = 0; $('#
 window.addEventListener('drop', async e => { e.preventDefault(); dragN = 0; $('#drop').hidden = true; const f = e.dataTransfer.files[0]; if (f) await loadBuffer(f.name, await f.arrayBuffer()); });
 window.addEventListener('keydown', e => {
   if (e.target.closest('input, select, textarea')) return;
-  if (e.code === 'Space' && st.source === 'file') { e.preventDefault(); $('#playSelBtn').click(); }
+  if (e.code !== 'Space') return;
+  if (observing()) {
+    if (st.mic) { e.preventDefault(); setHold(!st.obs.hold); }
+    else if (st.source === 'file' && st.x) { e.preventDefault(); if (st.play) stopPlay(); else startPlay(st.obs.t != null && st.obs.t < st.dur - 0.1 ? st.obs.t : 0, st.dur); }
+    return;
+  }
+  if (st.source === 'file') { e.preventDefault(); $('#playSelBtn').click(); }
 });
 
 /* =============================================================
@@ -2426,6 +2818,7 @@ window.addEventListener('keydown', e => {
    ============================================================= */
 function loop() {
   if (st.play) playTick();
+  if (st.obs.want != null) { const t = st.obs.want; st.obs.want = null; if (observing() && st.x && !st.play) obsAt(t); }
   if (st.source === 'mic' && st.mic) { dirty = true; tlDirty = true; updateHud(); }
   if (dirty) { renderSpiral(); dirty = false; }
   if (tlDirty) { drawTimeline(); tlDirty = false; }
@@ -2433,7 +2826,7 @@ function loop() {
 }
 const ro = new ResizeObserver(() => { resizeSpiral(); resizeTl(); });
 ro.observe($('#scope')); ro.observe($('#tlWrap'));
-syncSettingsUI(); resizeSpiral(); resizeTl(); refreshAll();
+syncSettingsUI(); setApp(S.app); resizeSpiral(); resizeTl(); refreshAll();
 requestAnimationFrame(loop);
 if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { dirty = true; tlDirty = true; });
 downloadsCap();

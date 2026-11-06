@@ -238,6 +238,162 @@
     }
   }
 
+  /* ---------- real-time spectrum (Observe mode) ---------- */
+  // A display for watching sound as it happens, built from single-frame quantities and power only.
+  // Every frame (hop about 5 ms):
+  //  1. Reassigned frequency of each bin, as in FrameAnalyzer.
+  //  2. Lobe coherence, the derivative of the reassigned frequency with respect to the bin frequency,
+  //     d f_hat / d f = 1 + Re( X_tdh / X_h - X_dh X_th / X_h^2 ),
+  //     from two more spectra through the time-weighted windows t h(t) and t h'(t). It is 0 for a
+  //     stationary sinusoid (all bins of its main lobe reassign to one frequency), 1 for an impulse,
+  //     and scattered for noise. It is the mixed partial derivative of the STFT phase (plus one),
+  //     with which Nelson (2001, 2002) told line components from impulses; the closed form is that
+  //     of Auger, Chassande-Mottin & Flandrin (2012).
+  //  3. Each bin's power, weighted by exp(-(d f_hat / d f / 0.3)^2) and by its level above the local
+  //     noise floor (smoothstep from 3 to 15 dB), is moved to its reassigned frequency on the
+  //     display's log-frequency cells, spread linearly over the neighbouring cells.
+  //  4. The cell levels, in dB, follow these deposits with a short attack and a slightly longer
+  //     release (first-order, as in a level meter). Averaging in dB favours what is present frame
+  //     after frame; sporadic noise deposits barely rise above the floor.
+  // No quantity is carried from one frame to the next except the smoothed cell levels.
+  class LiveSpectrum {
+    constructor(sr, opts = {}) {
+      this.sr = sr;
+      const N = this.N = opts.N || nextPow2(Math.round(sr * (opts.frame || 0.085)));
+      this.H = opts.hop || Math.min(N >> 2, nextPow2(Math.round(sr * 0.004)));   // 256 samples at 44.1/48 kHz
+      const K = this.K = N / 2 + 1;
+      this.binHz = sr / N;
+      this.kmin = Math.max(4, Math.ceil((opts.fmin || 25) / this.binHz));
+      this.kmax = Math.min(K - 5, Math.floor(Math.min(opts.fmax || 12500, 0.45 * sr) / this.binHz));
+      this.win = blackmanHarris(N); this.dwin = blackmanHarrisDeriv(N);
+      this.twin = new Float64Array(N); this.tdwin = new Float64Array(N);
+      let s2 = 0;
+      for (let n = 0; n < N; n++) { const t = n - N / 2; this.twin[n] = t * this.win[n]; this.tdwin[n] = t * this.dwin[n]; s2 += this.win[n] * this.win[n]; }
+      this.cal = 4 / (N * s2);                       // summed lobe power -> sinusoid amplitude^2
+      this.fft = new RealFFT(N);
+      this.buf = new Float64Array(N);
+      const A = () => new Float64Array(K);
+      this.Xr = A(); this.Xi = A(); this.Dr = A(); this.Di = A(); this.Tr = A(); this.Ti = A(); this.TDr = A(); this.TDi = A();
+      this.P = A(); this.fl = A();
+      this.sigma = opts.sigma || 0.3;
+      this.useCoherence = opts.coherence !== false; this.useSnr = opts.snrGate !== false;   // both on; off only for evaluation
+      // noise-floor bands (1/3 octave, at least 32 bins)
+      this.bands = [];
+      for (let k0 = this.kmin; k0 <= this.kmax;) {
+        const w = Math.max(32, Math.round(k0 * (Math.pow(2, 1 / 3) - 1))), k1 = Math.min(this.kmax + 1, k0 + w);
+        this.bands.push([k0, k1, (k0 + k1 - 1) / 2]); k0 = k1;
+      }
+      this.tmp = new Float64Array(N); this.bandFl = new Float64Array(this.bands.length);
+      // display cells
+      this.f0 = opts.f0; this.cellCents = opts.cellCents || 2; this.nC = opts.nCells;
+      this.inv = 1200 / this.cellCents;
+      this.c0 = Math.max(0, Math.floor(Math.log2(this.kmin * this.binHz / this.f0) * this.inv) - 2);
+      this.c1 = Math.min(this.nC - 1, Math.ceil(Math.log2(this.kmax * this.binHz / this.f0) * this.inv) + 2);
+      this.v0 = this.c0; this.v1 = this.c1;          // cells on view: the top level and the peaks are taken there
+      this.dep = new Float64Array(this.nC); this.depN = new Float64Array(this.nC);
+      this.L = new Float32Array(this.nC);            // smoothed level, dB (amplitude^2 re full scale)
+      this.num = new Float64Array(this.nC); this.den = new Float64Array(this.nC);   // for frequency read-out
+      this.floorRange = opts.floorRange || 85;       // levels are held no lower than top - floorRange
+      this.topMin = opts.topMin != null ? opts.topMin : -50;
+      this.setTimes(opts.attack || 0.02, opts.release || 0.07);
+      this.reset();
+    }
+    setTimes(attack, release) {
+      const dt = this.H / this.sr;
+      this.attack = attack; this.release = release;
+      this.aA = 1 - Math.exp(-dt / attack); this.aR = 1 - Math.exp(-dt / release);
+    }
+    setView(c0, c1) { this.v0 = Math.max(this.c0, c0); this.v1 = Math.min(this.c1, c1); }
+    reset() { this.top = -300; this.L.fill(-300); this.num.fill(0); this.den.fill(0); this.frames = 0; }
+    spectrum(x, start, w, re, im) {
+      const N = this.N, b = this.buf, L = x.length;
+      for (let n = 0; n < N; n++) { const j = start + n; b[n] = (j >= 0 && j < L) ? x[j] * w[n] : 0; }
+      this.fft.forward(b, re, im);
+    }
+    // Analyse the frame x[start .. start+N) and update the display levels.
+    frame(x, start) {
+      this.spectrum(x, start, this.win, this.Xr, this.Xi);
+      this.spectrum(x, start, this.dwin, this.Dr, this.Di);
+      this.spectrum(x, start, this.twin, this.Tr, this.Ti);
+      this.spectrum(x, start, this.tdwin, this.TDr, this.TDi);
+      const { Xr, Xi, Dr, Di, Tr, Ti, TDr, TDi, P, fl, kmin, kmax, bands } = this;
+      for (let k = kmin; k <= kmax; k++) P[k] = Xr[k] * Xr[k] + Xi[k] * Xi[k];
+      // local noise floor: median power in each band (median of an exponential variate = ln 2 x mean)
+      const tmp = this.tmp, bf = this.bandFl;
+      for (let i = 0; i < bands.length; i++) {
+        const [a, b] = bands[i], t = tmp.subarray(0, b - a);
+        for (let k = a; k < b; k++) t[k - a] = P[k];
+        t.sort(); bf[i] = Math.log(t[(b - a) >> 1] / Math.LN2 + 1e-40);
+      }
+      for (let k = kmin, i = 0; k <= kmax; k++) {
+        while (i < bands.length - 1 && bands[i + 1][2] <= k) i++;
+        let v;
+        if (k <= bands[0][2] || i >= bands.length - 1) v = bf[Math.min(i, bands.length - 1)];
+        else { const u = (k - bands[i][2]) / (bands[i + 1][2] - bands[i][2]); v = bf[i] * (1 - u) + bf[i + 1] * u; }
+        fl[k] = Math.exp(v);
+      }
+      // deposit weighted power at the reassigned frequencies
+      const dep = this.dep, depN = this.depN, c0 = this.c0, c1 = this.c1;
+      for (let c = c0; c <= c1; c++) { dep[c] = 0; depN[c] = 0; }
+      const rs = this.N / TWO_PI, bin = this.binHz, lim = 3.5 * bin, is2 = 1 / (this.sigma * this.sigma), cal = this.cal;
+      for (let k = kmin; k <= kmax; k++) {
+        const p = P[k]; if (!(p > 0)) continue;
+        const snr = this.useSnr ? 10 * Math.log10(p / (fl[k] + 1e-40)) : 99;
+        if (snr <= 3) continue;
+        const xr = Xr[k], xi = Xi[k];
+        const dr = (Dr[k] * xr + Di[k] * xi) / p, di = (Di[k] * xr - Dr[k] * xi) / p;       // X_dh / X_h
+        const f = (k - rs * di) * bin;
+        if (!(f > 0) || Math.abs(f - k * bin) > lim) continue;
+        const tr = (Tr[k] * xr + Ti[k] * xi) / p, ti = (Ti[k] * xr - Tr[k] * xi) / p;       // X_th / X_h
+        const m = 1 + (TDr[k] * xr + TDi[k] * xi) / p - (dr * tr - di * ti);              // d f_hat / d f
+        const w = (this.useCoherence ? Math.exp(-m * m * is2) : 1) * smoothstep(snr, 3, 15);
+        if (w < 1e-3) continue;
+        const pos = Math.log2(f / this.f0) * this.inv, e = p * w * cal;
+        // triangular spread over the neighbouring cells, centred on the continuous position
+        const j0 = Math.floor(pos);
+        for (let j = j0 - 1; j <= j0 + 2; j++) {
+          const t = 1 - Math.abs(j - pos) / 2; if (t <= 0 || j < c0 || j > c1) continue;
+          dep[j] += 0.5 * t * e; depN[j] += 0.5 * t * e * pos;
+        }
+      }
+      // smoothed levels in dB, held no lower than a floor below the tracked top
+      let mx = -300;
+      for (let c = this.v0; c <= this.v1; c++) if (dep[c] > 0) { const d = 10 * Math.log10(dep[c]); if (d > mx) mx = d; }
+      this.top = Math.max(mx, this.top - 3 * this.H / this.sr, this.topMin);
+      const floor = this.top - this.floorRange, L = this.L, aA = this.aA, aR = this.aR, num = this.num, den = this.den;
+      for (let c = c0; c <= c1; c++) {
+        const x = dep[c] > 0 ? Math.max(floor, 10 * Math.log10(dep[c])) : floor;
+        const y = L[c] < floor - 20 ? floor - 20 : L[c];
+        L[c] = y + (x > y ? aA : aR) * (x - y);
+        num[c] += aR * (depN[c] - num[c]); den[c] += aR * (dep[c] - den[c]);
+      }
+      this.frames++;
+    }
+    // display power (amplitude^2) per cell
+    power(out) {
+      out.fill(0);
+      for (let c = this.c0; c <= this.c1; c++) out[c] = Math.pow(10, this.L[c] / 10);
+      return out;
+    }
+    // the strongest peaks of the display: [{f, level (dB), rel (dB re strongest)}], sorted by frequency
+    peaks(dynDb = 60, maxN = 40, minSep = 6) {
+      const L = this.L, c0 = Math.max(this.c0 + minSep, this.v0), c1 = Math.min(this.c1 - minSep, this.v1), floor = this.top - this.floorRange;
+      let mx = -300; for (let c = c0; c <= c1; c++) if (L[c] > mx) mx = L[c];
+      const lo = Math.max(mx - dynDb, floor + 12), out = [];
+      for (let c = c0; c <= c1; c++) {
+        const v = L[c]; if (v < lo) continue;
+        let isMax = true;
+        for (let j = 1; j <= minSep && isMax; j++) if (L[c - j] >= v || L[c + j] > v) isMax = false;
+        if (!isMax) continue;
+        let n = 0, d = 0; for (let j = c - 4; j <= c + 4; j++) { n += this.num[j]; d += this.den[j]; }
+        const pos = d > 0 ? n / d : c;
+        out.push({ f: this.f0 * Math.pow(2, (Math.abs(pos - c) < 4 ? pos : c) / this.inv), level: v, rel: v - mx });
+      }
+      out.sort((a, b) => b.level - a.level);
+      return out.slice(0, maxN).sort((a, b) => a.f - b.f);
+    }
+  }
+
   /* ---------- onset detector (time domain, block energy in two high-passed bands) ---------- */
   // Band 0 (>150 Hz) follows the overall level and catches new tonal sound; band 1 (>1 kHz)
   // isolates the broadband click of a strike, which is masked in band 0 when the instrument
@@ -746,7 +902,7 @@
     return cands;
   }
 
-  const api = { noteInfo, RealFFT, blackmanHarris, FrameAnalyzer, OnsetDetector, trackFrames, analyzeWindow, finishWindow,
+  const api = { noteInfo, RealFFT, blackmanHarris, FrameAnalyzer, LiveSpectrum, OnsetDetector, trackFrames, analyzeWindow, finishWindow,
                 zoomSpectrum, zoomPeaks, refineTones, markBackground, quietFrames, windowLevel, confOf,
                 scoreWindow, analyzeSignal, findCandidates, windowOpts, toneStats, nextPow2, median, smoothstep };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.OSCore = api;

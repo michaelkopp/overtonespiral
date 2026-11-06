@@ -40,21 +40,21 @@
 \vspace{12pt}
 {\large Claude (Anthropic)\textsuperscript{$*$}\qquad Michael Kopp\textsuperscript{$\dagger$}\par}
 \vspace{6pt}
-October 2, 2026
+October 2, 2026; revised November 6, 2026
 \end{center}
 \vspace{10pt}
 }]
 
 \begingroup
 \renewcommand{\thefootnote}{\fnsymbol{footnote}}
-\footnotetext[1]{Claude Opus 5.5, model string \texttt{claude-opus-5-5}, run as an agent with file, shell and browser access at extra reasoning effort. Work carried out in October 2026.}
+\footnotetext[1]{Claude Opus 5.5, model string \texttt{claude-opus-5-5}, run as an agent with file, shell and browser access at extra reasoning effort. Work carried out in October and November 2026.}
 \footnotetext[2]{Corresponding author: \texttt{mkopp911@gmail.com}}
 \endgroup
 
 \begin{center}\bfseries ABSTRACT\end{center}
 \vspace{-4pt}
 \noindent
-We describe a method, and its implementation as a single web page, for measuring the fundamental and the dominant sustained partials of a struck idiophone, the crystal singing bowl in particular, from a recording or from a microphone, and for displaying them on a spiral with one turn per octave. The method chooses its own analysis window: attacks are detected in two high-passed bands, the ring-out after each attack is analysed as a candidate, and the candidate whose confident partials have the highest signal-to-noise ratios is retained. Within the window every frame is analysed on its own: the frequency of each bin is obtained by time-frequency reassignment with the derivative of the Blackman--Harris window, peaks are validated by the agreement of the reassigned frequencies across the main lobe, and peaks are linked into partials. Each partial receives a confidence, combining signal-to-noise ratio, duration, continuity and frequency stability, and a standard uncertainty. Split modes, which make the partials of a bowl beat, are resolved on a zoom spectrum of the ring-out; when they decay too fast for that, their beat is measured from the periodicity of the amplitude envelope and the uncertainty is widened accordingly. No phase information is carried from one frame to the next. On a synthetic ring-out with widely split modes, five partials and both modes of each pair are recovered to $10^{-5}\Hz$; with splits, decay rates and noise close to those of a recorded bowl, the main modes of the three resolved pairs are recovered to $0.03$~cents. On the recorded bowl, three partials are resolved as split pairs, with standard uncertainties of $0.06$ to $0.14$~cents, and a fourth, which beats at $3\Hz$ but decays too fast to be resolved, is listed with an uncertainty of $1.5$~cents.
+We describe a method, and its implementation as a single web page, for measuring the fundamental and the dominant sustained partials of a struck idiophone, the crystal singing bowl in particular, from a recording or from a microphone, and for displaying them on a spiral with one turn per octave. The method chooses its own analysis window: attacks are detected in two high-passed bands, the ring-out after each attack is analysed as a candidate, and the candidate whose confident partials have the highest signal-to-noise ratios is retained. Within the window every frame is analysed on its own: the frequency of each bin is obtained by time-frequency reassignment with the derivative of the Blackman--Harris window, peaks are validated by the agreement of the reassigned frequencies across the main lobe, and peaks are linked into partials. Each partial receives a confidence, combining signal-to-noise ratio, duration, continuity and frequency stability, and a standard uncertainty. Split modes, which make the partials of a bowl beat, are resolved on a zoom spectrum of the ring-out; when they decay too fast for that, their beat is measured from the periodicity of the amplitude envelope and the uncertainty is widened accordingly. No phase information is carried from one frame to the next. On a synthetic ring-out with widely split modes, five partials and both modes of each pair are recovered to $10^{-5}\Hz$; with splits, decay rates and noise close to those of a recorded bowl, the main modes of the three resolved pairs are recovered to $0.03$~cents. On the recorded bowl, three partials are resolved as split pairs, with standard uncertainties of $0.06$ to $0.14$~cents, and a fourth, which beats at $3\Hz$ but decays too fast to be resolved, is listed with an uncertainty of $1.5$~cents. A second display, for watching several instruments in real time, is built from single frames as well: each bin's power is moved to its reassigned frequency and weighted by its level above the local noise floor and by the derivative of the reassigned frequency with respect to frequency, which is $0$ for a sinusoid and $1$ for an impulse; the levels are then smoothed in decibels. On synthetic scenes it keeps noise and taps off the display, shows a new partial in full and removes a stopped one within about $120\ms$, and reads the frequencies of steady partials to a few tenths of a cent.
 
 \section{Introduction}
 
@@ -67,7 +67,8 @@ This paper describes a method that produces a list of measured partials with a s
 (ii)~a frequency for every bin of every frame by reassignment computed within that frame (Section~\ref{sec:frame});
 (iii)~partials with a confidence and an uncertainty, and the rejection of background tones (Section~\ref{sec:partials});
 (iv)~the resolution of split modes and the measurement of their beat rate (Section~\ref{sec:split});
-(v)~a spiral display of the reassigned spectrum (Fig.~\ref{fig:spiral}), and an audibility class for each partial (Section~\ref{sec:display}).
+(v)~a spiral display of the reassigned spectrum (Fig.~\ref{fig:spiral}), and an audibility class for each partial (Section~\ref{sec:display});
+(vi)~a real-time display, for observing one or several instruments as they sound (Section~\ref{sec:observe}).
 No frequency estimate in Sections~\ref{sec:frame}--\ref{sec:partials} uses phase information from more than one frame, and the zoom spectrum of Section~\ref{sec:split} is the Fourier transform of one segment. Section~\ref{sec:eval} evaluates the method on synthetic signals and on a recorded bowl, and Section~\ref{sec:snail} compares it with the Snail. The implementation is a single HTML file that runs in a web browser.
 
 \begin{figure}[t]
@@ -272,7 +273,43 @@ as a crude allowance for masking. The calibration of a recording is unknown, so 
 \section{Microphone input}
 \label{sec:mic}
 
-The microphone signal reaches the analysis through an audio worklet in blocks of 1024 samples and is kept in a ring buffer of $20\s$. Frames are analysed as they arrive and feed the live display. An attack opens a capture, which is closed by the next attack of comparable strength, after $T_{\max}$, or, once it is $1\s$ old, when no confident partial has been seen for $0.6\s$. While no capture is open and confident partials are sounding, a capture of length $T_{\max}$ is also taken every $2.5\s$, for sustained sounds; unlike the windows of Section~\ref{sec:window}, these are not required to be free of attacks. Each capture is analysed as in Sections~\ref{sec:window}--\ref{sec:split}, with the quietest frames of the last $30\s$ as background reference and the zoom spectra computed from the ring buffer, and its end is trimmed as in Section~\ref{sec:window} without a second analysis. Captures without a listed partial are discarded. The best capture by~\eqref{eq:score} is shown; once there are two or more, each partial is reported with the number of captures in which it, or the other mode of its pair, was found within $15\ct$.
+The microphone signal reaches the analysis through an audio worklet in blocks of 1024 samples and is kept in a ring buffer of $20\s$. Frames are analysed as they arrive and feed the live display. An attack opens a capture, which is closed by the next attack of comparable strength, after $T_{\max}$, or, once it is $1\s$ old, when no confident partial has been seen for $0.6\s$. While no capture is open and confident partials are sounding, a capture of length $T_{\max}$ is also taken every $2.5\s$, for sustained sounds; unlike the windows of Section~\ref{sec:window}, these are not required to be free of attacks. Each capture is analysed as in Sections~\ref{sec:window}--\ref{sec:split}, with the quietest frames of the last $30\s$ as background reference and the zoom spectra computed from the ring buffer, and its end is trimmed as in Section~\ref{sec:window} without a second analysis. Captures without a listed partial are discarded. The best capture by~\eqref{eq:score} is shown; once there are two or more, each partial is reported with the number of captures in which it, or the other mode of its pair, was found within $15\ct$. In the real-time mode of Section~\ref{sec:observe} the microphone feeds only the real-time display.
+
+\section{Real-time display}
+\label{sec:observe}
+
+The measurement reports partials once a ring-out has been analysed. For watching sound as it happens, in particular when several instruments sound at once and attacks carry no meaning, the implementation has a second mode, \emph{Observe}, with a display of its own. It is built, like the rest of the method, from quantities of single frames; only levels are carried from one frame to the next.
+
+\subsection{Frames and lobe coherence}
+
+Frames of $N = 4096$ samples ($85\ms$ at $48\,\mathrm{kHz}$; $2048$ and $8192$ as options) are taken every $H = 256$ samples ($5.3\ms$) with the window~\eqref{eq:bh}. Besides $X_h$ and $X_{\mathcal{D}h}$, two further FFTs are computed with the time-weighted windows $\mathcal{T}h[n] = (n - N/2)\,h[n]$ and $\mathcal{T}\mathcal{D}h[n] = (n - N/2)\,\mathcal{D}h[n]$. The lobe-coherence test of Section~\ref{sec:frame} compares the reassigned frequencies of neighbouring bins; its continuous counterpart is the derivative of the reassigned frequency with respect to the analysis frequency. Differentiating~\eqref{eq:reass} with $\partial X_g/\partial\omega = -i X_{\mathcal{T}g}$ (the terms in the time origin cancel) gives
+\begin{equation}
+\mu = \frac{\partial\hat\omega}{\partial\omega} = 1 + \operatorname{Re}\left\{ \frac{X_{\mathcal{T}\mathcal{D}h}}{X_h} - \frac{X_{\mathcal{D}h}\,X_{\mathcal{T}h}}{X_h^2} \right\},
+\label{eq:mu}
+\end{equation}
+which is one plus the mixed partial derivative $\partial^2\Phi/\partial t\,\partial\omega$ of the STFT phase in the form given by Auger, Chassande-Mottin and Flandrin~\cite{AugerLM}. For a stationary sinusoid every bin of the main lobe reassigns to the same frequency and $\mu = 0$; for an impulse no bin is moved and $\mu = 1$; Nelson used these two values to tell line components from impulses~\cite{Nelson01,Nelson02,FitzFulop}. For a linear chirp $\mu$ lies between them: with a Gaussian window of time spread $\lambda$ and a chirp rate $\alpha$ (rad/s$^2$), $\mu = \alpha^2\lambda^4/(1+\alpha^2\lambda^4)$~\cite{AugerLM}. In noise $\mu$ scatters widely: in white noise, half the bins have $|\mu| > 0.76$.
+
+\subsection{Deposits}
+
+As in Section~\ref{sec:display}, the power of each bin is moved to its reassigned frequency~\eqref{eq:reassd} on the grid of $2$-cent cells, if that frequency lies inside the main lobe, but with two weights:
+\begin{equation}
+e[\ell,k] = \frac{4|X_h[\ell,k]|^2}{N\sum_n h[n]^2}\; e^{-(\mu[\ell,k]/0.3)^2}\; \sst\bigl(S[\ell,k]; 3\dB, 15\dB\bigr).
+\label{eq:dep}
+\end{equation}
+$S$ is the level of the bin above the local noise floor, the median power of its one-third-octave band (Section~\ref{sec:frame}) divided by $\ln 2$, the ratio of the median to the mean of an exponential variate. The level weight removes most of the noise, and also broadband events such as taps, which raise the band median with them. The coherence weight removes the remaining noise and the residue of transients, and also the energy that the window smears across many bins during a fast glide; with $N = 4096$ it falls to $0.5$ at a chirp rate of about $600\Hz/\mathrm{s}$ (about $2400$ and $150\Hz/\mathrm{s}$ for $N = 2048$ and $8192$), which a vibrato of $\pm 0.8\,\%$ at $5.5\Hz$ reaches above $2\,\mathrm{kHz}$. Each deposit is spread linearly over the cells within $4\ct$ of its frequency.
+
+\subsection{Smoothing in decibels}
+
+Let $E_c[\ell]$ be the sum of the deposits in cell $c$ in frame $\ell$, $L_{\max}[\ell]$ the largest of them on the displayed part of the spiral, held and falling by at most $3\dB/\mathrm{s}$, and $L_{\mathrm{fl}} = L_{\max} - R - 25\dB$, $R$ being the display range. The displayed level of the cell follows
+\begin{equation}
+\Lambda_c[\ell] = \Lambda_c[\ell-1] + \alpha\,\bigl(\max(10\log_{10} E_c[\ell],\, L_{\mathrm{fl}}) - \Lambda_c[\ell-1]\bigr),
+\label{eq:ballistics}
+\end{equation}
+with $\alpha = 1 - e^{-H/(f_s\tau)}$, $\tau = 15\ms$ while the level rises and $60\ms$ while it falls ($8$ and $30\ms$ for the option \emph{fast}, $40$ and $170\ms$ for \emph{steady}): the attack and release of a level meter, applied to each cell. Averaged in decibels, a cell that receives energy only in occasional frames, as from residual noise, stays near the floor, whereas a partial that deposits its energy frame after frame rises to its level within a few time constants. $\Lambda$ is mapped to $[0,1]$ over the range $R$ below $L_{\max}$ and drawn as in Section~\ref{sec:display}. For a recording, the display at any moment is obtained by analysing the $0.3\s$ before it, and during playback it follows the sound.
+
+\subsection{Read-out}
+
+Four times per second, the maxima of $\Lambda$ that exceed every cell within $12\ct$ and lie within the listed range ($60\dB$) of the strongest are listed, on the displayed part of the spiral. The frequency of each is the centroid of the reassigned frequencies deposited in the nine cells around it, weighted by the deposits~\eqref{eq:dep} and smoothed with the release time constant; its level is $\Lambda$ relative to the strongest maximum, and its audibility class is computed as in Section~\ref{sec:display}. The list states what sounds at the moment. It carries neither a confidence nor an uncertainty, which only the measurement of Sections~\ref{sec:window}--\ref{sec:split} provides.
 
 \section{Evaluation}
 \label{sec:eval}
@@ -353,9 +390,46 @@ The three lower partials are split pairs (Fig.~\ref{fig:zoom}). Their partners l
 \end{figure}
 
 
+\subsection{Real-time display}
+\label{sec:evalobs}
+
+Table~\ref{tab:observe} compares the display of Section~\ref{sec:observe} with the live view that accompanies the measurement, in which the reassigned cell powers of $8192$-point frames (Section~\ref{sec:display}) are averaged with weight $0.4$ for the newest frame, without weights, and with variants of itself. All signals are synthetic and sampled at $48\,\mathrm{kHz}$. Six steady partials, at $196$ to $3413\Hz$ and $0$ to $-34\dB$, in white noise of standard deviation $0.05$ or $0.2$ (per-bin signal-to-noise ratios of the weakest partial, for $N = 4096$, of about $19$ and $7\dB$), give the fraction of the spiral away from the partials that is visibly lit, more than $3\,\%$ of the display range, and the flicker of the weakest partial, the standard deviation of its displayed level. A tone at $660\Hz$, switched on and off beside one at $440\Hz$, gives the time until it is shown within $6\dB$ of its steady level and the time until it has fallen to a tenth of it on the display, from the moment the change reaches the newest sample of a frame (on a $20\ms$ grid). A scene of $6\s$ combines a struck bowl, its four partials split as in Table~\ref{tab:bowl} and decaying, a sung melody of five notes with a vibrato of $\pm 0.8\,\%$ at $5.5\Hz$ and glides of $60\ms$ between the notes, four taps (bursts of noise decaying with $2\ms$), and pink noise. The extent of the spiral that is lit, in cents, is averaged over quiet stretches and over the $150\ms$ after each tap and after the start of each glide (Fig.~\ref{fig:observe}).
+
+\begin{table*}[t]
+\centering
+\caption{Real-time display, synthetic signals. Lit: share of the spiral away from the partials shown above $3\,\%$ of the display range; flicker: standard deviation of the displayed level of the weakest partial ($-34\dB$); full, gone: time until a partial switched on is shown within $6\dB$ of its level, and until one switched off has fallen to a tenth of its display value; scene: extent of the spiral lit in the scene of Fig.~\ref{fig:observe}; read-out: RMS error of the listed frequency of the partials at $541.7\Hz$ ($-6\dB$) and $3412.8\Hz$ ($-34\dB$) in the stronger noise. Default: $N = 4096$, $\tau = 15/60\ms$.}
+\label{tab:observe}
+\small
+\begin{tabular}{@{}lrrrrrrrrrrr@{}}
+\toprule
+ & \multicolumn{2}{c}{lit (\%)} & \multicolumn{2}{c}{flicker (dB)} & full & gone & \multicolumn{3}{c}{scene, lit (cents)} & \multicolumn{2}{c}{read-out (cents)}\\
+\cmidrule(lr){2-3}\cmidrule(lr){4-5}\cmidrule(lr){8-10}\cmidrule(l){11-12}
+display & $\sigma{=}0.05$ & $0.2$ & $0.05$ & $0.2$ & (ms) & (ms) & quiet & taps & glides & $-6\dB$ & $-34\dB$\\
+\midrule
+live view of the measurement & 4.0 & 33.1 & 0.4 & 2.3 & 120 & 304 & 477 & 2079 & 1219 & -- & -- \\
+Observe without weights & 4.8 & 24.0 & 0.4 & 2.5 & 120 & 144 & 405 & 1538 & 1186 & 0.09 & 1.47 \\
+\quad level weight only & 0.0 & 0.3 & 0.4 & 7.1 & 120 & 123 & 379 & 478 & 590 & 0.09 & 0.83 \\
+Observe (default) & 0.0 & 0.1 & 0.5 & 7.1 & 120 & 123 & 257 & 316 & 241 & 0.09 & 0.60 \\
+\quad fast smoothing & 0.0 & 0.3 & 0.6 & 7.5 & 83 & 80 & 230 & 280 & 263 & 0.19 & 1.62 \\
+\quad steady smoothing & 0.0 & 0.0 & 0.3 & 6.0 & 163 & 203 & 320 & 413 & 320 & 0.04 & 0.40 \\
+\quad $N = 2048$ & 0.0 & 0.0 & 0.6 & 3.8 & 83 & 101 & 252 & 306 & 215 & 0.14 & 1.98 \\
+\quad $N = 8192$ & 0.0 & 0.5 & 0.4 & 4.6 & 163 & 160 & 215 & 294 & 235 & 0.06 & 0.20 \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=0.92\textwidth]{fig_observe.png}
+\caption{The scene of Section~\ref{sec:evalobs} at $2.34\s$, $40\ms$ after a tap (top), and at $2.64\s$, $40\ms$ into the glide from E4 to G4 (bottom). Left: live view of the measurement; centre: real-time display with the level weight only; right: real-time display~\eqref{eq:dep}--\eqref{eq:ballistics}. Display range $60\dB$; the bowl's partials are at A\#3, D\#5, D6 and A6, the melody's harmonics elsewhere.}
+\label{fig:observe}
+\end{figure*}
+
+The level weight keeps noise off the display in both noise conditions and removes the taps. The coherence weight then reduces the extent lit in the scene by a third, and during glides by three fifths, so that it hardly changes with taps and glides; compared with the live view of the measurement, the extent lit falls by $85\,\%$ after taps and by $80\,\%$ during glides. At equal frame length the smoothing in decibels removes a stopped partial in about half the time of the power average ($160$ against $304\ms$ for $N = 8192$). The price of the level weight is the flicker of a partial only a few decibels above the noise floor of a frame: $7\dB$ for the weakest partial in the stronger noise, where it is listed in $87\,\%$ of the read-outs; with $N = 8192$ its signal-to-noise ratio is $3\dB$ higher, it is listed in every read-out and flickers by $4.6\dB$. The listed frequencies of the five stronger partials have RMS errors of $0.1$ to $0.3\ct$ in the stronger noise, that of the weakest $0.6\ct$. On the recorded bowl, the listed frequencies of the three lower partials, sampled every $0.25\s$ from $19.5$ to $23.5\s$, agree in the median with the measured ones of Table~\ref{tab:bowl} to within $0.5\ct$, and spread by $0.4$ to $0.9\ct$ as their beating partners pull them; the fourth is read as $1800.6\Hz$, between its two modes.
+
 \subsection{Computation}
 
-A frame, two FFTs of $8192$ points and the peak analysis, takes $0.7$ to $0.8\ms$ in JavaScript (V8, Node.js~22) on one core of a cloud virtual machine, under $8\,\%$ of the hop of $10.7\ms$; the $47\s$ recording, $4430$ frames, is analysed with all candidate windows in about $5\s$.
+A frame, two FFTs of $8192$ points and the peak analysis, takes $0.7$ to $0.8\ms$ in JavaScript (V8, Node.js~22) on one core of a cloud virtual machine, under $8\,\%$ of the hop of $10.7\ms$; the $47\s$ recording, $4430$ frames, is analysed with all candidate windows in about $5\s$. A frame of the real-time display, four FFTs of $4096$ points and the update of the cells, takes $0.5\ms$, under $10\,\%$ of its hop of $5.3\ms$.
 
 \section{Relation to the Snail-Analyser}
 \label{sec:snail}
@@ -364,11 +438,13 @@ Both methods estimate, for each analysis frequency, the frequency of the compone
 
 The Snail interpolates the STFT onto a logarithmic grid of analysis frequencies, typically 20 per semitone, with frames of $50\ms$ every $5\ms$~\cite{HelieTimbre}. Its frequency deviation is the change of the demodulated phase $\varphi_d(t,f) = \varphi(t,f) - 2\pi f t$ between successive frames, divided by $2\pi$ times the hop, and its display weights the loudness at each analysis frequency by the modulus of the low-pass filtered phasor $e^{i\varphi_d}$; this weighting contracts the lobe of a stationary component to a width set by the cut-off frequency and suppresses components that vary faster~\cite{HelieTimbre,HeliePatent}. The present method forms neither the demodulated phase nor a phase difference between frames. Its frequency estimate is the reassigned frequency~\eqref{eq:reassd} of a single frame, on the linear grid of the FFT, and its display is sharpened by moving power to that frequency, without a weighting by temporal consistency. As the hop tends to zero the two frequency estimates tend to the same quantity, the instantaneous frequency of the band-pass signal of the bin~\cite{Kodera78,AugerFlandrin}: the Snail evaluates it by a finite difference across frames, the present method analytically within one frame.
 
-The two designs trade reactivity against measurement. The Snail follows vibrato and glissandi within tens of milliseconds, presents a clean image in noise through its constancy weighting, and adds tuning and harmonic-synchronicity indicators for performers~\cite{HelieTimbre}. The present method uses frames more than three times longer and reports partials only once a ring-out of at least $D_{\min}$ has been analysed; noise appears in its display at its reassigned frequencies, at low level, and is kept out of the list by the tests of Sections~\ref{sec:frame} and~\ref{sec:partials} rather than by a weighting of the image. In return it chooses its analysis window, gives each partial a confidence and a standard uncertainty, and resolves split modes a fraction of a hertz apart, which requires an observation of several seconds (Section~\ref{sec:split}); none of these is part of the published descriptions of the Snail~\cite{HelieSnail,HelieTimbre}.
+The measurement trades reactivity for statements of accuracy. The Snail follows vibrato and glissandi within tens of milliseconds, presents a clean image in noise through its constancy weighting, and adds tuning and harmonic-synchronicity indicators for performers~\cite{HelieTimbre}. The measurement uses frames more than three times longer and reports partials only once a ring-out of at least $D_{\min}$ has been analysed; noise appears in its display at its reassigned frequencies, at low level, and is kept out of the list by the tests of Sections~\ref{sec:frame} and~\ref{sec:partials} rather than by a weighting of the image. In return it chooses its analysis window, gives each partial a confidence and a standard uncertainty, and resolves split modes a fraction of a hertz apart, which requires an observation of several seconds (Section~\ref{sec:split}); none of these is part of the published descriptions of the Snail~\cite{HelieSnail,HelieTimbre}.
+
+The real-time display of Section~\ref{sec:observe} serves the Snail's purpose, a clean, stable and reactive image of several sounds at once, by other means. It forms no demodulated phase, no phase difference between frames and no low-pass filtered phase quantity. Its image is sharpened by moving power to the reassigned frequency rather than by weighting the loudness at fixed analysis frequencies, and its weights are computed within one frame: the level of a bin above its band's median, and the derivative~\eqref{eq:mu} of the reassigned frequency across frequency, which states whether the bins of a lobe agree on one frequency, not whether a phase stays constant in time. What is carried from frame to frame is the level of each cell, smoothed in decibels as by a level meter. The Snail's constancy indicator suppresses components that vary faster than its cut-off frequency~\cite{HelieTimbre}; the coherence weight similarly dims components that sweep faster than a few hundred hertz per second with the default frames (Section~\ref{sec:observe}), so that the upper harmonics of a strong vibrato fade during the fastest part of each cycle, and the shorter frames reduce the effect.
 
 \section{Conclusion}
 
-The method measures the sustained partials of a struck bowl on the ring-out it selects itself, and states how far each measurement can be trusted. Its frequency estimates come from reassignment within single frames, which in continuous time is exact for an exponentially damped complex exponential, and which in noise stays within a factor of $2.1$ to $2.6$ of the Cram\'er--Rao bound; at that precision the measurement is governed by the instrument. Split modes that last long enough are resolved by a zoom spectrum over the ring-out, to within $0.03\ct$ with the parameters of the recorded bowl; a pair that decays too fast is reported as a blend of its modes, with its beat rate and a correspondingly wider uncertainty. The confidence~\eqref{eq:conf} and the minimum duration remove brief and unstable events, and background tones are recognised by their presence before the strike. The spiral display shows the reassigned spectrum from which the partials were measured, so that what the list reports can be seen. The implementation, a single HTML file, is released under the GNU General Public License, version 3 or later.
+The method measures the sustained partials of a struck bowl on the ring-out it selects itself, and states how far each measurement can be trusted. Its frequency estimates come from reassignment within single frames, which in continuous time is exact for an exponentially damped complex exponential, and which in noise stays within a factor of $2.1$ to $2.6$ of the Cram\'er--Rao bound; at that precision the measurement is governed by the instrument. Split modes that last long enough are resolved by a zoom spectrum over the ring-out, to within $0.03\ct$ with the parameters of the recorded bowl; a pair that decays too fast is reported as a blend of its modes, with its beat rate and a correspondingly wider uncertainty. The confidence~\eqref{eq:conf} and the minimum duration remove brief and unstable events, and background tones are recognised by their presence before the strike. The spiral display shows the reassigned spectrum from which the partials were measured, so that what the list reports can be seen. For observing several instruments in real time, a second display weights the reassigned power of each frame by its level above the noise floor and by the agreement of its lobe, and smooths it in decibels; it keeps noise and transients off the spiral and follows the sound within about a tenth of a second, again without carrying phase from one frame to the next. The implementation, a single HTML file, is released under the GNU General Public License, version 3 or later.
 
 \small
 \begin{thebibliography}{99}
@@ -451,6 +527,18 @@ ISO~226:2003, \emph{Acoustics --- Normal equal-loudness-level contours}. Geneva:
 
 \bibitem{GlasbergMoore}
 B.~R. Glasberg and B.~C.~J. Moore, ``Derivation of auditory filter shapes from notched-noise data,'' \emph{Hear. Res.}, vol.~47, no.~1--2, pp.~103--138, 1990.
+
+\bibitem{Nelson01}
+D.~J. Nelson, ``Cross-spectral methods for processing speech,'' \emph{J. Acoust. Soc. Am.}, vol.~110, no.~5, pp.~2575--2592, 2001.
+
+\bibitem{Nelson02}
+D.~J. Nelson, ``Instantaneous higher order phase derivatives,'' \emph{Digital Signal Process.}, vol.~12, no.~2--3, pp.~416--428, 2002.
+
+\bibitem{FitzFulop}
+K.~Fitz and S.~A. Fulop, ``A unified theory of time-frequency reassignment,'' arXiv:0903.3080, 2009.
+
+\bibitem{AugerLM}
+F.~Auger, E.~Chassande-Mottin, and P.~Flandrin, ``Making reassignment adjustable: the Levenberg--Marquardt approach,'' in \emph{Proc. IEEE Int. Conf. Acoust., Speech, Signal Process. (ICASSP)}, Kyoto, Japan, 2012, pp.~3889--3892.
 
 \bibitem{RifeBoorstyn}
 D.~C. Rife and R.~R. Boorstyn, ``Single-tone parameter estimation from discrete-time observations,'' \emph{IEEE Trans. Inf. Theory}, vol.~IT-20, no.~5, pp.~591--598, 1974.
