@@ -18,9 +18,10 @@ time, for watching one or several instruments as they sound.
 
 1. Click **Microphone** and allow the browser to use your microphone.
 2. Strike your singing bowl.
-3. Wait a few seconds while the app records and analyses the ring-out. When it is done, the list
-   of partials (the fundamental and the overtones) appears. Every further strike is analysed
-   too, and the best measurement is kept.
+3. Wait a few seconds while the app records and analyses the ring-out. A line under the spiral
+   shows the progress and says when the result is ready; the list of partials (the fundamental
+   and the overtones) then appears. Every further strike is analysed too, and the best
+   measurement is kept.
 4. Click **Microphone** again to switch it off.
 5. Inspect the overtones on the spiral or in the list. **Export list** saves the list as a text
    file, **Export image** saves the spiral as a picture.
@@ -35,9 +36,10 @@ the file onto the page.
 ### Observing in real time
 
 1. Click **Observe** at the top of the page.
-2. Click **Microphone** and play: the spiral shows what sounds now, and the list *Sounding now*
-   names the partials with their frequencies and levels. Nothing is captured or measured in this
-   mode, so attacks do not matter and several instruments can play at once.
+2. Click **Microphone** and play: the spiral shows what sounds now. The list *Sounding now* names
+   the partials that have sounded for about ¾ s, with their frequencies and levels; it is renewed
+   once a second, and a partial that stops is dimmed before it leaves. Nothing is captured or
+   measured in this mode, so attacks do not matter and several instruments can play at once.
 3. **Hold** (or the space bar) freezes the picture; press it again to continue.
 4. With a recording, Observe shows the spectrum at the cursor on the timeline: click or drag there
    to look at any moment, press the space bar to play from it, or **▶ All** to play from the start.
@@ -86,7 +88,9 @@ In short:
   on a fine grid) over up to 5 s of the ring-out;
 - audibility from the ISO 226:2003 equal-loudness contour at 60 phon, with a critical-band (ERB)
   allowance for masking;
-- the spiral shows the reassigned power spectrum of the analysis window on a 2-cent grid;
+- the spiral shows the reassigned power spectrum of the analysis window on a 2-cent grid, weighted
+  as in the real-time display below so that noise and transients stay dark (the measurement itself
+  does not use these weights); while the microphone is on, it shows the real-time display;
 - the real-time display (Observe) moves the power of each bin of 85 ms frames, every 5.3 ms, to its
   reassigned frequency, weighted by its level above the local noise floor and by the agreement of
   the bins of its lobe (the derivative of the reassigned frequency with respect to frequency, 0 for

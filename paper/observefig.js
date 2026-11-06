@@ -1,5 +1,5 @@
 // Fig. 7: the synthetic scene of observe.js on the spiral, as the app draws it (light theme), at two moments,
-// for the live view of Measure mode, Observe without the lobe-coherence weight, and Observe.
+// for the unweighted reassigned power averaged frame by frame, Observe without the lobe-coherence weight, and Observe.
 // usage: node observefig.js fig_observe.png [page-url]
 // Serve the app first, e.g. python3 -m http.server 8765 in the repository root; needs Playwright.
 'use strict';
@@ -13,7 +13,7 @@ const FONTS = {
 };
 const TIMES = [2.34, 2.64];            // 40 ms after the tap at 2.3 s; 40 ms into the glide from E4 to G4 at 2.6 s
 const METHODS = [
-  { name: 'Measure mode, live view', kind: 'measure' },
+  { name: 'unweighted power average', kind: 'measure' },
   { name: 'Observe, level weight only', opts: { coherence: false } },
   { name: 'Observe', opts: {} },
 ];

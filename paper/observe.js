@@ -1,6 +1,6 @@
 // Real-time display (Observe mode): the measurements of Section 9.5 (Table 3), from synthetic signals.
 // usage: node observe.js > observe.json      (needs nothing but Node.js)
-// Compares the live view of Measure mode (FrameAnalyzer, 170 ms frames, cell power smoothed per frame)
+// Compares the unweighted reassigned spectrum shown frame by frame (FrameAnalyzer, 170 ms frames, cell power averaged)
 // with the real-time spectrum of Observe mode (LiveSpectrum), with and without its two weights.
 'use strict';
 const C = require('../core.js');
@@ -25,7 +25,7 @@ function synth(dur, parts, noise, click) {
 // A synthetic scene with several sources (no recording needed): a struck bowl (four partials, three of them
 // split pairs, decaying), a sung melody with vibrato and 60 ms glides between its notes, taps, and pink noise.
 const TAPS = [1.2, 2.3, 3.9, 4.8], NOTES = [[293.66, 0.5], [329.63, 1.6], [392.0, 2.6], [349.23, 3.5], [329.63, 4.4]], MEL_END = 5.4;
-function scene(dur = 6) {
+function scene(dur = 6, notes = NOTES) {
   const n = Math.round(dur * SR), x = new Float32Array(n);
   seed = 11;
   // bowl, struck at 0: [f (Hz), amplitude, decay (dB/s), partner offset (Hz), partner level (dB)]
@@ -38,9 +38,9 @@ function scene(dur = 6) {
   // voice: 20 harmonics, two formants, vibrato 5.5 Hz +-0.8 %
   const ph = new Float64Array(21).map(() => rnd() * 2 * Math.PI);
   for (let i = Math.round(0.5 * SR); i < Math.round(MEL_END * SR); i++) {
-    const t = i / SR; let j = 0; while (j < NOTES.length - 1 && t >= NOTES[j + 1][1]) j++;
-    let f = NOTES[j][0];
-    if (j > 0 && t - NOTES[j][1] < 0.06) f = NOTES[j - 1][0] * Math.pow(NOTES[j][0] / NOTES[j - 1][0], (t - NOTES[j][1]) / 0.06);
+    const t = i / SR; let j = 0; while (j < notes.length - 1 && t >= notes[j + 1][1]) j++;
+    let f = notes[j][0];
+    if (j > 0 && t - notes[j][1] < 0.06) f = notes[j - 1][0] * Math.pow(notes[j][0] / notes[j - 1][0], (t - notes[j][1]) / 0.06);
     const vib = 1 + 0.008 * Math.sin(2 * Math.PI * 5.5 * (t - 0.5)) * Math.min(1, (t - 0.5) / 0.4);
     const env = Math.min(1, (t - 0.5) / 0.05, (MEL_END - t) / 0.08) * 0.05;
     let v = 0;
@@ -92,7 +92,7 @@ function background(S, partsF, t0, t1, thr = 0.03) {
 const peakV = (s, f) => { const c0 = Math.round(cellOf(f)); let m = 0; for (let c = c0 - 15; c <= c0 + 15; c++) m = Math.max(m, s.v[c]); return m; };
 
 const methods = [
-  { name: 'Measure mode, live view', kind: 'measure' },
+  { name: 'unweighted power average', kind: 'measure' },
   { name: 'Observe, no weights', opts: { coherence: false, snrGate: false } },
   { name: 'Observe, level weight only', opts: { coherence: false } },
   { name: 'Observe (default)', opts: {} },
@@ -106,6 +106,7 @@ const sigs = {
   quiet: synth(3, PARTS, 0.05), noisy: synth(3, PARTS, 0.2),
   step: synth(3, [{ f: 440, a: 0.5 }, { f: 660, a: 0.5, on: 1, off: 2 }], 0.003),
   clicks: synth(3, [{ f: 440, a: 0.1 }], 0.003, 0.5),
+  noisyLong: synth(8, PARTS, 0.2),
 };
 if (require.main !== module) { module.exports = { synth, scene, run, SR, NC, F0, cellOf, TAPS, NOTES }; return; }
 const res = [];
@@ -127,14 +128,15 @@ for (const m of methods) {
   r.scene_taps = avg(TAPS.map(t => visible(Ss, t, t + win)));
   r.scene_glides = avg(NOTES.slice(1).map(([f, t]) => visible(Ss, t, t + win)));
   if (m.kind !== 'measure') {
-    // read-out: the strongest partials of the noisy signal, every 20 ms from 1 to 2.9 s
+    // read-out: the steady list of the stronger noise, renewed every second from 2 to 8 s
     const ls = new C.LiveSpectrum(SR, Object.assign({ fmin: 25, fmax: 12500, f0: F0, cellCents: 2, nCells: NC, floorRange: RANGE + 25 }, m.opts));
     ls.setView(Math.ceil(cellOf(65.41)), Math.floor(cellOf(65.41 * 128)));
-    const err = PARTS.map(() => []); let next = 1;
-    for (let s = -ls.N; s + ls.N <= sigs.noisy.length; s += ls.H) {
-      ls.frame(sigs.noisy, s); const t = (s + ls.N) / SR;
-      if (t < next || t > 2.9) continue; next += 0.02;
-      const P = ls.peaks(60);
+    const L = new C.SteadyList(), x = sigs.noisyLong;
+    const err = PARTS.map(() => []); let next = 2;
+    for (let s = -ls.N; s + ls.N <= x.length; s += ls.H) {
+      ls.frame(x, s); const at = ls.frames * ls.H / SR; L.step(ls, at);
+      if (at < next - 1e-9) continue; next += 1;
+      const P = L.rows(at);
       PARTS.forEach((p, i) => {
         let best = null; for (const q of P) { const e = 1200 * Math.log2(q.f / p.f); if (Math.abs(e) < 20 && (best == null || Math.abs(e) < Math.abs(best))) best = e; }
         if (best != null) err[i].push(best);
@@ -155,4 +157,22 @@ for (const m of methods) {
   const ms = Number(process.hrtime.bigint() - t) / 1e6 / 2000;
   console.error(`Observe frame: ${ms.toFixed(3)} ms (hop ${(1000 * ls.H / SR).toFixed(2)} ms)`);
 }
-console.log(JSON.stringify({ methods: res }, null, 1));
+// Stability of the list (default display): entries that join or leave between successive lists, per second,
+// for the peaks of the display read four times a second and for the steady list renewed every second.
+const lists = {};
+for (const [name, x] of [['melody', SCENE], ['held note', scene(6, [[329.63, 0.5]])], ['noise only', synth(6, [], 0.001)]]) {
+  const ls = new C.LiveSpectrum(SR, { fmin: 25, fmax: 12500, f0: F0, cellCents: 2, nCells: NC, floorRange: RANGE + 25 });
+  ls.setView(Math.ceil(cellOf(65.41)), Math.floor(cellOf(65.41 * 128)));
+  const L = new C.SteadyList(), raw = [], steady = []; let nextR = 0;
+  for (let s = -ls.N; s + ls.N <= x.length; s += ls.H) {
+    ls.frame(x, s); const at = ls.frames * ls.H / SR;
+    if (L.step(ls, at) && at >= 2) raw.push(ls.peaks(60, 40).map(p => p.f));
+    if (at >= nextR) { nextR = at + 1; if (at >= 2) steady.push(L.rows(at).map(r => r.f)); }
+  }
+  const near = (u, V) => V.some(v => Math.abs(1200 * Math.log2(u / v)) < 25);
+  const changes = (A, dt) => { let c = 0; for (let i = 1; i < A.length; i++) c += A[i - 1].filter(u => !near(u, A[i])).length + A[i].filter(u => !near(u, A[i - 1])).length; return A.length > 1 ? c / ((A.length - 1) * dt) : 0; };
+  const len = A => { const n = A.map(a => a.length); return n.length ? [Math.min(...n), Math.max(...n)] : [0, 0]; };
+  lists[name] = { raw_changes_per_s: +changes(raw, 0.25).toFixed(1), raw_rows: len(raw), steady_changes_per_s: +changes(steady, 1).toFixed(1), steady_rows: len(steady) };
+  console.error(`list, ${name}: peaks read 4/s ${lists[name].raw_changes_per_s} changes/s, ${lists[name].raw_rows.join('-')} rows; steady list ${lists[name].steady_changes_per_s} changes/s, ${lists[name].steady_rows.join('-')} rows`);
+}
+console.log(JSON.stringify({ methods: res, lists }, null, 1));

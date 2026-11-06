@@ -143,6 +143,7 @@
 
     // Analyse the frame whose window starts at sample `start`.
     frame(x, start) {
+      this.lastX = x; this.lastStart = start;
       this.spectrum(x, start, this.win, this.re, this.im);
       this.spectrum(x, start, this.dwin, this.dre, this.dim);
       return this.analyseCurrent(start);
@@ -236,6 +237,37 @@
         cells[c] += mag2[k] * cal;
       }
     }
+
+    // The same for the spiral of a measured window, with the two weights of the real-time display (LiveSpectrum):
+    // the lobe coherence exp(-(d f_hat / d f / 0.3)^2), from two more spectra of the current frame, and the
+    // level above the local noise floor (smoothstep from 3 to 15 dB). The measurement does not use it.
+    accumulateCellsWeighted(cells, cfg, weight = 1) {
+      const N = this.N, K = this.K;
+      if (!this.twin) {
+        this.twin = new Float64Array(N); this.tdwin = new Float64Array(N);
+        for (let n = 0; n < N; n++) { const t = n - N / 2; this.twin[n] = t * this.win[n]; this.tdwin[n] = t * this.dwin[n]; }
+        this.tre = new Float64Array(K); this.tim = new Float64Array(K); this.tdre = new Float64Array(K); this.tdim = new Float64Array(K);
+      }
+      this.spectrum(this.lastX, this.lastStart, this.twin, this.tre, this.tim);
+      this.spectrum(this.lastX, this.lastStart, this.tdwin, this.tdre, this.tdim);
+      const { re, im, dre, dim, tre, tim, tdre, tdim, mag2, ifr, db, floor, kmin, kmax, binHz } = this;
+      const lim = 3.5 * binHz, f0 = cfg.f0, inv = 1200 / cfg.cellCents, nC = cells.length;
+      const cal = weight * 4 / (N * this.sumW2);
+      for (let k = kmin; k <= kmax; k++) {
+        const p = mag2[k]; if (!(p > 0)) continue;
+        const snr = db[k] - floor[k] - 1.6;        // re the band's mean noise power (the floor is the median of dB)
+        if (snr <= 3) continue;
+        const f = ifr[k]; if (!(f > 0) || Math.abs(f - k * binHz) > lim) continue;
+        const xr = re[k], xi = im[k];
+        const dr = (dre[k] * xr + dim[k] * xi) / p, di = (dim[k] * xr - dre[k] * xi) / p;
+        const tr = (tre[k] * xr + tim[k] * xi) / p, ti = (tim[k] * xr - tre[k] * xi) / p;
+        const m = 1 + (tdre[k] * xr + tdim[k] * xi) / p - (dr * tr - di * ti);
+        const w = Math.exp(-m * m / 0.09) * smoothstep(snr, 3, 15);
+        if (w < 1e-3) continue;
+        const pos = Math.log2(f / f0) * inv, e = p * w * cal, j0 = Math.floor(pos);
+        for (let j = j0 - 1; j <= j0 + 2; j++) { const t = 1 - Math.abs(j - pos) / 2; if (t > 0 && j >= 0 && j < nC) cells[j] += 0.5 * t * e; }
+      }
+    }
   }
 
   /* ---------- real-time spectrum (Observe mode) ---------- */
@@ -290,9 +322,10 @@
       this.c0 = Math.max(0, Math.floor(Math.log2(this.kmin * this.binHz / this.f0) * this.inv) - 2);
       this.c1 = Math.min(this.nC - 1, Math.ceil(Math.log2(this.kmax * this.binHz / this.f0) * this.inv) + 2);
       this.v0 = this.c0; this.v1 = this.c1;          // cells on view: the top level and the peaks are taken there
-      this.dep = new Float64Array(this.nC); this.depN = new Float64Array(this.nC);
+      this.dep = new Float64Array(this.nC); this.depN = new Float64Array(this.nC); this.depS = new Float64Array(this.nC);
       this.L = new Float32Array(this.nC);            // smoothed level, dB (amplitude^2 re full scale)
       this.num = new Float64Array(this.nC); this.den = new Float64Array(this.nC);   // for frequency read-out
+      this.snrN = new Float64Array(this.nC);         // deposit-weighted level above the noise floor (dB), for the read-out
       this.floorRange = opts.floorRange || 85;       // levels are held no lower than top - floorRange
       this.topMin = opts.topMin != null ? opts.topMin : -50;
       this.setTimes(opts.attack || 0.02, opts.release || 0.07);
@@ -304,7 +337,7 @@
       this.aA = 1 - Math.exp(-dt / attack); this.aR = 1 - Math.exp(-dt / release);
     }
     setView(c0, c1) { this.v0 = Math.max(this.c0, c0); this.v1 = Math.min(this.c1, c1); }
-    reset() { this.top = -300; this.L.fill(-300); this.num.fill(0); this.den.fill(0); this.frames = 0; }
+    reset() { this.top = -300; this.L.fill(-300); this.num.fill(0); this.den.fill(0); this.snrN.fill(0); this.frames = 0; }
     spectrum(x, start, w, re, im) {
       const N = this.N, b = this.buf, L = x.length;
       for (let n = 0; n < N; n++) { const j = start + n; b[n] = (j >= 0 && j < L) ? x[j] * w[n] : 0; }
@@ -333,8 +366,8 @@
         fl[k] = Math.exp(v);
       }
       // deposit weighted power at the reassigned frequencies
-      const dep = this.dep, depN = this.depN, c0 = this.c0, c1 = this.c1;
-      for (let c = c0; c <= c1; c++) { dep[c] = 0; depN[c] = 0; }
+      const dep = this.dep, depN = this.depN, depS = this.depS, c0 = this.c0, c1 = this.c1;
+      for (let c = c0; c <= c1; c++) { dep[c] = 0; depN[c] = 0; depS[c] = 0; }
       const rs = this.N / TWO_PI, bin = this.binHz, lim = 3.5 * bin, is2 = 1 / (this.sigma * this.sigma), cal = this.cal;
       for (let k = kmin; k <= kmax; k++) {
         const p = P[k]; if (!(p > 0)) continue;
@@ -353,19 +386,19 @@
         const j0 = Math.floor(pos);
         for (let j = j0 - 1; j <= j0 + 2; j++) {
           const t = 1 - Math.abs(j - pos) / 2; if (t <= 0 || j < c0 || j > c1) continue;
-          dep[j] += 0.5 * t * e; depN[j] += 0.5 * t * e * pos;
+          dep[j] += 0.5 * t * e; depN[j] += 0.5 * t * e * pos; depS[j] += 0.5 * t * e * Math.min(snr, 60);
         }
       }
       // smoothed levels in dB, held no lower than a floor below the tracked top
       let mx = -300;
       for (let c = this.v0; c <= this.v1; c++) if (dep[c] > 0) { const d = 10 * Math.log10(dep[c]); if (d > mx) mx = d; }
       this.top = Math.max(mx, this.top - 3 * this.H / this.sr, this.topMin);
-      const floor = this.top - this.floorRange, L = this.L, aA = this.aA, aR = this.aR, num = this.num, den = this.den;
+      const floor = this.top - this.floorRange, L = this.L, aA = this.aA, aR = this.aR, num = this.num, den = this.den, snrN = this.snrN;
       for (let c = c0; c <= c1; c++) {
         const x = dep[c] > 0 ? Math.max(floor, 10 * Math.log10(dep[c])) : floor;
         const y = L[c] < floor - 20 ? floor - 20 : L[c];
         L[c] = y + (x > y ? aA : aR) * (x - y);
-        num[c] += aR * (depN[c] - num[c]); den[c] += aR * (dep[c] - den[c]);
+        num[c] += aR * (depN[c] - num[c]); den[c] += aR * (dep[c] - den[c]); snrN[c] += aR * (depS[c] - snrN[c]);
       }
       this.frames++;
     }
@@ -375,7 +408,8 @@
       for (let c = this.c0; c <= this.c1; c++) out[c] = Math.pow(10, this.L[c] / 10);
       return out;
     }
-    // the strongest peaks of the display: [{f, level (dB), rel (dB re strongest)}], sorted by frequency
+    // the strongest peaks of the display: [{f, level (dB), rel (dB re strongest), snr (dB above the noise floor)}],
+    // sorted by frequency
     peaks(dynDb = 60, maxN = 40, minSep = 6) {
       const L = this.L, c0 = Math.max(this.c0 + minSep, this.v0), c1 = Math.min(this.c1 - minSep, this.v1), floor = this.top - this.floorRange;
       let mx = -300; for (let c = c0; c <= c1; c++) if (L[c] > mx) mx = L[c];
@@ -385,12 +419,93 @@
         let isMax = true;
         for (let j = 1; j <= minSep && isMax; j++) if (L[c - j] >= v || L[c + j] > v) isMax = false;
         if (!isMax) continue;
-        let n = 0, d = 0; for (let j = c - 4; j <= c + 4; j++) { n += this.num[j]; d += this.den[j]; }
+        let n = 0, d = 0, q = 0; for (let j = c - 4; j <= c + 4; j++) { n += this.num[j]; d += this.den[j]; q += this.snrN[j]; }
         const pos = d > 0 ? n / d : c;
-        out.push({ f: this.f0 * Math.pow(2, (Math.abs(pos - c) < 4 ? pos : c) / this.inv), level: v, rel: v - mx });
+        out.push({ f: this.f0 * Math.pow(2, (Math.abs(pos - c) < 4 ? pos : c) / this.inv), level: v, rel: v - mx, snr: d > 0 ? q / d : 0 });
       }
       out.sort((a, b) => b.level - a.level);
       return out.slice(0, maxN).sort((a, b) => a.f - b.f);
+    }
+  }
+
+  /* ---------- steady list of the partials sounding now (Observe mode) ---------- */
+  // The display follows the sound within a tenth of a second; a list of numbers that changed as fast could
+  // not be read. The peaks of the display are read four times a second and followed from one read-out to
+  // the next by frequency (within 25 cents). A peak joins the list once it has been found in 3 of the last 4
+  // read-outs (about 0.75 s) with a median level within `range` dB of the strongest, or of `refMin` dB (re full
+  // scale) when nothing stronger sounds, and at least `minSnr` dB above the local noise floor; the last two keep
+  // background noise out of the list when nothing else sounds. A listed one is marked as fading after 3
+  // read-outs without it and leaves after 6 (1.5 s), or when it falls `margin` dB below either limit.
+  // Frequency and level shown are medians over the last 1.5 s. At most `max` rows.
+  class SteadyList {
+    constructor(opts = {}) {
+      this.every = opts.every || 0.25; this.join = opts.join || 3; this.of = opts.of || 4;
+      this.fadeAfter = opts.fadeAfter || 3; this.leaveAfter = opts.leaveAfter || 6;
+      this.range = opts.range || 40; this.margin = opts.margin != null ? opts.margin : 6;
+      this.tol = opts.tol || 25; this.max = opts.max || 16; this.avg = opts.avg || 1.5;
+      this.minSnr = opts.minSnr != null ? opts.minSnr : 12;
+      this.refMin = opts.refMin != null ? opts.refMin : -50;
+      this.reset();
+    }
+    reset() { this.tracks = []; this.next = 0; }
+    // call after each analysed frame with the time of its newest sample (s); reads the display when due
+    step(ls, at) {
+      if (at + 1e-9 < this.next) return false;
+      this.next = (this.next > 0 && at - this.next < this.every ? this.next : at) + this.every;
+      this.update(ls.peaks(this.range + this.margin, 48), at);
+      return true;
+    }
+    update(P, at) {
+      const T = this.tracks;
+      for (const t of T) t.hit = null;
+      let ref = this.refMin; for (const p of P) if (p.level > ref) ref = p.level;   // the level the range is counted from
+      // strongest peaks first, each to the nearest free track within the tolerance
+      for (const p of P.slice().sort((a, b) => b.level - a.level)) {
+        let best = null, bd = this.tol;
+        for (const t of T) { if (t.hit) continue; const d = Math.abs(1200 * Math.log2(p.f / t.fRef)); if (d < bd) { bd = d; best = t; } }
+        if (best) best.hit = p;
+        else T.push({ fRef: p.f, hist: [], seen: [], miss: 0, listed: false, hit: p });
+      }
+      for (const t of T) {
+        t.seen.push(!!t.hit); if (t.seen.length > this.of) t.seen.shift();
+        if (t.hit) { t.fRef = t.hit.f; t.hist.push([at, t.hit.f, t.hit.rel, t.hit.snr, t.hit.level - ref]); t.miss = 0; } else t.miss++;
+        while (t.hist.length && t.hist[0][0] < at - 2 * this.avg) t.hist.shift();
+        const lev = this.level(t, at, 4), snr = this.level(t, at, 3);
+        if (!t.listed) { if (t.seen.filter(Boolean).length >= this.join && lev >= -this.range && snr >= this.minSnr) t.listed = true; }
+        else if (t.miss >= this.leaveAfter || lev < -this.range - this.margin || snr < this.minSnr - this.margin) t.gone = true;
+      }
+      // tracks that have run into each other (a gliding or wide-vibrato partial) are merged
+      T.sort((a, b) => a.fRef - b.fRef);
+      for (let i = 1; i < T.length; i++) {
+        const a = T[i - 1], b = T[i];
+        if (a.gone || b.gone || Math.abs(1200 * Math.log2(b.fRef / a.fRef)) >= 0.6 * this.tol) continue;
+        const keep = (a.listed && !b.listed) || (a.listed === b.listed && a.hist.length >= b.hist.length) ? a : b;
+        (keep === a ? b : a).gone = true;
+      }
+      this.tracks = T.filter(t => !t.gone && (t.listed || t.miss < this.of));
+    }
+    level(t, at, k = 2) {                     // median over the last `avg` seconds of the relative level (k = 2), the
+                                              // level above the noise floor (k = 3) or the level re the reference (k = 4)
+      const h = t.hist.filter(q => q[0] >= at - this.avg);
+      return h.length ? median(h.map(q => q[k])) : t.hist.length ? t.hist[t.hist.length - 1][k] : -Infinity;
+    }
+    // the rows to show: {f, rel, fading}, sorted by frequency. When more than `max` are listed, the strongest
+    // are shown, rows already on show counting 3 dB stronger, so that near-equal partials do not take turns,
+    // and fading rows 6 dB weaker, so that they give way to partials that sound now.
+    rows(at) {
+      const R = [];
+      for (const t of this.tracks) {
+        if (!t.listed) continue;
+        let h = t.hist.filter(q => q[0] >= at - this.avg); if (!h.length) h = t.hist.slice(-1);
+        if (!h.length) continue;
+        R.push({ t, f: median(h.map(q => q[1])), rel: median(h.map(q => q[2])), fading: t.miss >= this.fadeAfter });
+      }
+      const prio = r => r.rel + (r.fading ? -6 : r.t.shown ? 3 : 0);
+      R.sort((a, b) => prio(b) - prio(a));
+      for (const t of this.tracks) t.shown = false;
+      const out = R.slice(0, this.max);
+      for (const r of out) r.t.shown = true;
+      return out.sort((a, b) => a.f - b.f).map(r => ({ f: r.f, rel: r.rel, fading: r.fading }));
     }
   }
 
@@ -902,7 +1017,7 @@
     return cands;
   }
 
-  const api = { noteInfo, RealFFT, blackmanHarris, FrameAnalyzer, LiveSpectrum, OnsetDetector, trackFrames, analyzeWindow, finishWindow,
+  const api = { noteInfo, RealFFT, blackmanHarris, FrameAnalyzer, LiveSpectrum, SteadyList, OnsetDetector, trackFrames, analyzeWindow, finishWindow,
                 zoomSpectrum, zoomPeaks, refineTones, markBackground, quietFrames, windowLevel, confOf,
                 scoreWindow, analyzeSignal, findCandidates, windowOpts, toneStats, nextPow2, median, smoothstep };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.OSCore = api;

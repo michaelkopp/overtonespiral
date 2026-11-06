@@ -1,7 +1,7 @@
 Overtone Spiral — dominant partials
 
 Reference:   A4 = 440.00 Hz, 12-tone equal temperament
-Exported:    10/2/2026, 2:03:37 PM
+Exported:    11/6/2026, 8:59:44 PM
 
 Current measurement
 Source:      bowl_full.wav
