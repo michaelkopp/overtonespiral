@@ -36,8 +36,6 @@
   SPDX-License-Identifier: GPL-3.0-or-later
 -->
 <title>Overtone Spiral</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Azeret+Mono:wght@400;500&family=Hanken+Grotesk:wght@400;500;600&family=Spectral:ital,wght@0,500;0,600;1,400;1,500&display=swap">
 <style>
 /* Layout: an instrument panel. The spiral scope fills the left, the measurement ledger of partials
@@ -2310,9 +2308,17 @@ class Mic {
     return this.ac.state === 'running' && performance.now() - this.lastPush < 400 && !!t && t.readyState === 'live' && !(strict && this.zeros > 0.3 * this.sr);
   }
   watch() {                               // once a second: has the input stopped although the page is visible?
-    if (this.closed || this.busy || this.status === 'stalled' || document.hidden) return;
+    if (this.closed || this.busy || document.hidden) return;
+    const flowing = performance.now() - this.lastPush < 400 && this.zeros < 0.3 * this.sr;
+    if (this.status === 'stalled') {      // waiting for a tap, but the interruption may also end by itself
+      if (this.ac.state !== 'running') this.ac.resume().catch(() => {});
+      else if (flowing) { this.status = 'live'; this.dropTap(); }
+      return;
+    }
     const t = this.stream && this.stream.getAudioTracks()[0];
-    if (this.ac.state !== 'running' || performance.now() - this.lastPush > 1500 || !t || t.readyState !== 'live') this.revive(false);
+    // digital silence: an interrupted microphone can deliver zeros (not given up on unless a reconnection left it so)
+    const silent = this.zeros > 1.5 * this.sr && !this.zeroOk;
+    if (this.ac.state !== 'running' || performance.now() - this.lastPush > 1500 || !t || t.readyState !== 'live' || silent) this.revive(false);
   }
   // Bring the input back after an interruption (iOS stops the page's audio while the screen is off, and does not
   // always restart it), from the lightest remedy to a new context.  If nothing works without a tap, ask for one.
@@ -2336,7 +2342,7 @@ class Mic {
     finally {
       this.busy = false;
       if (this.status === 'reconnecting') this.status = 'live';
-      if (this.status === 'live') this.dropTap();
+      if (this.status === 'live') { this.dropTap(); if (this.zeros > 0.3 * this.sr) this.zeroOk = true; }   // this input is silent as it is
     }
   }
   // A tap or key press allows the page to start audio, where iOS requires it: resume at once, inside the event.
@@ -2390,6 +2396,7 @@ class Mic {
     this.lastPush = performance.now();
     let z = true; for (let i = 0; i < n; i++) if (chunk[i] !== 0) { z = false; break; }
     this.zeros = z ? (this.zeros || 0) + n : 0;
+    if (!z) this.zeroOk = false;
     if (this.gapNext || g >= 0) { this.gapNext = false; this.gap(this.total + Math.max(0, g)); }
     let w = this.total % R;
     for (let i = 0; i < n; i++) { this.ring[w++] = chunk[i]; if (w === R) w = 0; }
@@ -2611,6 +2618,7 @@ async function restartMic() { if (st.mic) { await stopMic(); await startMic(); }
 // iOS interrupts the page's audio while the screen is off or another app is in front; check the input on return
 document.addEventListener('visibilitychange', () => { if (st.mic && !document.hidden) st.mic.pageShown(); });
 window.addEventListener('pageshow', e => { if (e.persisted && st.mic && !document.hidden) st.mic.pageShown(); });
+window.addEventListener('focus', () => { if (st.mic && !document.hidden) st.mic.pageShown(); });   // e.g. after a system alert
 function setMicSpiral(v) { st.micSpiral = v; $('#segLive').setAttribute('aria-pressed', v === 'live'); $('#segCap').setAttribute('aria-pressed', v === 'capture'); dirty = true; updateHud(); }
 $('#segLive').onclick = () => setMicSpiral('live');
 $('#segCap').onclick = () => setMicSpiral('capture');
@@ -3082,7 +3090,19 @@ if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { di
 downloadsCap();
 libInit();
 // Offline use (e.g. added to the home screen): a service worker keeps the app and its fonts in the browser's cache.
+// When the app is opened with a connection, the browser checks for a new version; once that has been installed,
+// an idle page (nothing loaded, microphone off) reloads itself to use it.
 if ('serviceWorker' in navigator && window.self === window.top && (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1')) {
+  let hadController = !!navigator.serviceWorker.controller, reloading = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    const sw = navigator.serviceWorker.controller;
+    if (hadController && !reloading && sw && !st.source && !st.mic && !st.play) {
+      reloading = true;                   // once the new version is fully active
+      const go = () => { if (!st.source && !st.mic && !st.play) location.replace(location.href); };
+      if (sw.state === 'activated') go(); else sw.addEventListener('statechange', () => { if (sw.state === 'activated') go(); });
+    }
+    hadController = true;
+  });
   window.addEventListener('load', () => { navigator.serviceWorker.register('sw.js').catch(() => {}); });
 }
 window.__os = { st, S, C, listTones, noteOf, toHeights, displayPower, drawSpiral, buildText, NCELLS };   // for debugging and scripted figures

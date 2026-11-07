@@ -37,10 +37,15 @@ the file onto the page.
 
 On an iPhone, open the app in Safari, tap **Share → Add to Home Screen**, and open it once from the
 home screen while online. From then on it starts without a network connection: a service worker keeps
-the page, its icons and its fonts in the phone's cache, and fetches a newer version whenever the
-network is there. (Android: Chrome's menu → *Add to Home screen* or *Install app*.) The home-screen
-app keeps its own saved bowls, separate from Safari's; use *Export* and *Import* under *Saved bowls*
-to move them across.
+the page, its icons and its fonts in the phone's cache and serves them from there, without using the
+network. A new version is picked up when the app is opened with a connection; if it is still running
+in the background, close it in the app switcher first. (Android: Chrome's menu → *Add to Home screen*
+or *Install app*.) The home-screen app keeps its own saved bowls, separate from Safari's; use *Export*
+and *Import* under *Saved bowls* to move them across.
+
+If the phone interrupts the microphone (the screen goes dark, a call comes in), the app reconnects it
+when you return. Should the phone not allow that without a touch, the status line asks you to tap
+anywhere.
 
 ### Observing in real time
 
