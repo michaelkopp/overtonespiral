@@ -1426,7 +1426,7 @@ const measOk = t => t.conf >= MEAS.thr && t.rel >= -MEAS.dyn;       // a confide
 function cellCfg() { return { f0: F0, cellCents: CELL_CENTS, range: 100 }; }
 function confColor(c) { return c >= 0.85 ? 'var(--good)' : c >= 0.6 ? 'var(--warn)' : 'var(--bad)'; }
 /* ---------------- version and event log (Settings → About this copy) ---------------- */
-const APP_VERSION = '1.1', APP_BUILD = '2a05ac84b65e';    // set by the build; APP_BUILD also names the offline copy
+const APP_VERSION = '1.2', APP_BUILD = 'c6cca9846156';    // set by the build; APP_BUILD also names the offline copy
 const LOG_KEY = 'overtone-spiral-log';
 let evlog = []; try { evlog = JSON.parse(localStorage.getItem(LOG_KEY) || '[]'); } catch (e) {}
 function logEvent(msg) {
@@ -1436,6 +1436,14 @@ function logEvent(msg) {
   try { localStorage.setItem(LOG_KEY, JSON.stringify(evlog)); } catch (e) {}
   if (!$('#settings').hidden) renderAbout();
 }
+const loggedErrors = new Set();
+function logError(e) {
+  const msg = (e && (e.message || e.reason || e.name)) || String(e);
+  if (loggedErrors.has(msg) || loggedErrors.size > 20) return;
+  loggedErrors.add(msg); logEvent('error: ' + msg);
+}
+window.addEventListener('error', e => logError(e.error || e.message));
+window.addEventListener('unhandledrejection', e => logError(e.reason));
 const swOK = () => 'serviceWorker' in navigator && window.self === window.top && (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1');
 async function offlineState() {
   if (!swOK()) return { short: '', long: 'Offline use is not available in this view.' };
@@ -2295,14 +2303,28 @@ class Mic {
     this.wd = setInterval(() => this.watch(), 1000);
   }
   // The audio input (microphone stream -> audio context -> capture node).  After an interruption it is rebuilt
-  // while the analysis keeps its state: with fresh = false only the stream is renewed, with fresh = true also the context.
-  async open(fresh) {
-    const stream = await navigator.mediaDevices.getUserMedia(MIC_AUDIO);
+  // while the analysis keeps its state: the old input is released first, as switching the microphone off and on
+  // does, then a new stream and a new context are made.  `limit` (ms) bounds the wait for the microphone.
+  release() {
+    this.unhook();
+    try { this.stream.getTracks().forEach(t => t.stop()); } catch (e) {}
+    try { const c = this.ac.close(); if (c && c.catch) c.catch(() => {}); } catch (e) {}   // not awaited: after an interruption it may never settle
+  }
+  async open(fresh, limit) {
+    if (fresh && this.ac) { if (this.total) logEvent('microphone: releasing the input'); this.release(); }
+    if (this.total) logEvent('microphone: asking for the microphone');
+    const ask = navigator.mediaDevices.getUserMedia(MIC_AUDIO);
+    const stream = limit ? await Promise.race([ask, new Promise(r => setTimeout(() => r(null), limit))]) : await ask;
+    if (!stream) {
+      ask.then(s => s.getTracks().forEach(t => t.stop()), () => {});
+      throw Object.assign(new Error('the microphone did not answer'), { name: 'Timeout' });
+    }
     if (this.closed) { stream.getTracks().forEach(t => t.stop()); return 'closed'; }
     const old = this.stream; this.stream = stream;
-    if (old) old.getTracks().forEach(t => t.stop());
+    if (old && old !== stream) old.getTracks().forEach(t => t.stop());
     if (fresh || !this.ac || this.ac.state === 'closed') {
-      if (this.ac) { this.unhook(); try { this.ac.close(); } catch (e) {} }
+      if (this.ac && !fresh) { this.unhook(); try { const c = this.ac.close(); if (c && c.catch) c.catch(() => {}); } catch (e) {} }
+      if (this.total) logEvent('microphone: new audio context');
       const ac = (this.ac = new (window.AudioContext || window.webkitAudioContext)());
       await within(ac.resume(), 1500);
       if (this.sr && ac.sampleRate !== this.sr) return 'rate';
@@ -2311,7 +2333,8 @@ class Mic {
       const sink = ac.createGain(); sink.gain.value = 0; sink.connect(ac.destination);
       try {
         const url = URL.createObjectURL(new Blob([WORKLET], { type: 'application/javascript' }));
-        await ac.audioWorklet.addModule(url);
+        const added = await Promise.race([ac.audioWorklet.addModule(url).then(() => true), new Promise(r => setTimeout(() => r(false), 4000))]);
+        if (!added) throw new Error('worklet');
         this.node = new AudioWorkletNode(ac, 'os-capture', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1] });
         this.node.port.onmessage = e => this.push(e.data.b, e.data.g);
       } catch (e) {
@@ -2346,7 +2369,7 @@ class Mic {
     if (this.closed || this.busy || document.hidden) return;
     const flowing = performance.now() - this.lastPush < 400 && this.zeros < 0.3 * this.sr;
     if (this.status === 'stalled') {      // waiting for a tap, but the interruption may also end by itself
-      if (this.ac.state !== 'running') this.ac.resume().catch(() => {});
+      if (this.ac.state !== 'running' && this.ac.state !== 'closed') this.ac.resume().catch(() => {});
       else if (flowing) { this.status = 'live'; this.dropTap(); logEvent('microphone back by itself'); }
       return;
     }
@@ -2366,17 +2389,17 @@ class Mic {
     try {
       if (!tap && await this.flowing(500, true)) return;
       logEvent(`microphone interrupted (${tap ? 'tap' : why || 'checked on return'}; audio ${this.ac.state}): reconnecting`);
+      this.lastRevive = performance.now();
       this.gap(this.total);                 // what was recorded before the interruption is complete as it is
       this.status = 'reconnecting'; this.askTap();
-      how = 'resuming the audio';
-      if (this.ac.state !== 'running') await within(this.ac.resume(), 1000);
-      else { await within(this.ac.suspend(), 500); await within(this.ac.resume(), 1000); }   // WebKit: a context that says 'running' but has stopped
-      if (await this.flowing(600, true)) return;
-      how = 'a new microphone stream';
-      let r = await this.open(false);
-      if (r === 'ok' && await this.flowing(800, true)) return;
-      how = 'a new audio context';
-      r = await this.open(true);
+      if (this.ac.state !== 'running' && this.ac.state !== 'closed') {
+        how = 'resuming the audio';
+        logEvent('microphone: resuming the audio');
+        await within(this.ac.resume(), 1000);
+        if (await this.flowing(600, true)) return;
+      }
+      how = 'restarting the microphone';     // as switching it off and on
+      const r = await this.open(true, 5000);
       if (r === 'rate') { this.status = 'live'; this.busy = false; restartMic(); return; }
       if (r === 'closed' || await this.flowing(800, false)) return;
       this.status = 'stalled';
@@ -2393,7 +2416,7 @@ class Mic {
     if (this.closed || this.tapFn) return;
     const fn = this.tapFn = e => {
       if (e.target && e.target.closest && e.target.closest('#micBtn')) return;   // the button itself switches the microphone off
-      if (this.ac.state !== 'running') this.ac.resume().catch(() => {});
+      if (this.ac.state !== 'running' && this.ac.state !== 'closed') this.ac.resume().catch(() => {});
       if (!this.busy) { this.dropTap(); this.revive(true); }
     };
     for (const ev of ['pointerup', 'touchend', 'keydown']) document.addEventListener(ev, fn, true);
@@ -2403,7 +2426,12 @@ class Mic {
     for (const ev of ['pointerup', 'touchend', 'keydown']) document.removeEventListener(ev, this.tapFn, true);
     this.tapFn = null;
   }
-  pageShown() { if (this.status === 'stalled') { this.dropTap(); this.status = 'live'; } this.revive(false); }
+  // back on screen, or focus back (e.g. after a system alert, which may itself have come from reconnecting: then not again at once)
+  pageShown(focus) {
+    if (focus && performance.now() - (this.lastRevive || -1e9) < 8000) return;
+    if (this.status === 'stalled') { this.dropTap(); this.status = 'live'; }
+    this.revive(false);
+  }
   // The input stopped and came back: a ring-out recorded before is finished with what it has, and no later
   // measurement window reaches back across the gap.
   gap(at) {
@@ -2581,9 +2609,8 @@ class Mic {
     }
   }
   async stop() {
-    this.closed = true; clearInterval(this.wd); this.dropTap(); this.unhook();
-    try { this.stream.getTracks().forEach(t => t.stop()); } catch (e) {}
-    try { await this.ac.close(); } catch (e) {}
+    this.closed = true; clearInterval(this.wd); this.dropTap();
+    this.release();
   }
 }
 // Measure mode with the microphone: one line saying what the measurement is doing, and when a result is ready
@@ -2630,16 +2657,22 @@ function showMicCapture() {
   refreshAll();
 }
 async function startMic() {
+  if (st.micStarting) { st.micStarting.stop(); st.micStarting = null; $('#micTxt').textContent = 'Microphone'; logEvent('microphone start cancelled'); return; }
   stopPlay(); obsClear(); st.micLast = null;
   const m = new Mic();
-  try { await m.start(); }
+  st.micStarting = m; $('#micTxt').textContent = 'Starting…';
+  try { await m.start(); if (m.closed) return; }
   catch (e) {
+    if (m.closed) return;
+    st.micStarting = null; $('#micTxt').textContent = 'Microphone';
+    logEvent('microphone could not be started: ' + (e.name || '') + ' ' + (e.message || ''));
     const framed = window.self !== window.top;
     if (e.name === 'NotAllowedError' || e.name === 'SecurityError' || e.name === 'NoApi')
       toast(framed ? 'Microphone access is blocked in this view. Record the instrument with your phone’s voice recorder and load the recording with “Open audio…”, or use the Overtone Spiral app file in Chrome on a computer.' : 'Microphone access was refused. Allow it for this page in the browser’s site settings and try again.', 10000);
     else toast('The microphone could not be started (' + (e.message || e.name) + ').', 7000);
     return;
   }
+  st.micStarting = null;
   st.mic = m; st.source = 'mic'; st.view = 'live'; st.result = null; st.cells = null; st.sel = null; st.shown = null;
   logEvent(`microphone on (${(m.sr / 1000).toFixed(1)} kHz, ${observing() ? 'Observe' : 'Measure'})`);
   setMicSpiral('live');
@@ -2667,7 +2700,7 @@ window.addEventListener('online', () => logEvent('device online'));
 window.addEventListener('offline', () => logEvent('device offline'));
 window.addEventListener('blur', () => logEvent('focus lost'));
 window.addEventListener('pageshow', e => { if (e.persisted) logEvent('page restored from memory'); if (e.persisted && st.mic && !document.hidden) st.mic.pageShown(); });
-window.addEventListener('focus', () => { logEvent('focus back'); if (st.mic && !document.hidden) st.mic.pageShown(); });   // e.g. after a system alert
+window.addEventListener('focus', () => { logEvent('focus back'); if (st.mic && !document.hidden) st.mic.pageShown(true); });   // e.g. after a system alert
 function setMicSpiral(v) { st.micSpiral = v; $('#segLive').setAttribute('aria-pressed', v === 'live'); $('#segCap').setAttribute('aria-pressed', v === 'capture'); dirty = true; updateHud(); }
 $('#segLive').onclick = () => setMicSpiral('live');
 $('#segCap').onclick = () => setMicSpiral('capture');
@@ -3128,14 +3161,16 @@ window.addEventListener('keydown', e => {
    Main loop
    ============================================================= */
 function loop() {
-  if (st.play) playTick();
-  if (st.obs.want != null) { const t = st.obs.want; st.obs.want = null; if (observing() && st.x && !st.play) obsAt(t, true); }
-  if (st.obs.wantFull != null) { const t = st.obs.wantFull; st.obs.wantFull = null; if (observing() && st.x && !st.play) obsAt(t); }
-  if (st.source === 'mic' && st.mic) { dirty = true; tlDirty = true; updateHud(); }
-  renderMicStatus();
-  if (dirty) { renderSpiral(); dirty = false; }
-  if (tlDirty) { drawTimeline(); tlDirty = false; }
-  requestAnimationFrame(loop);
+  requestAnimationFrame(loop);            // first, so that an error below does not stop the display
+  try {
+    if (st.play) playTick();
+    if (st.obs.want != null) { const t = st.obs.want; st.obs.want = null; if (observing() && st.x && !st.play) obsAt(t, true); }
+    if (st.obs.wantFull != null) { const t = st.obs.wantFull; st.obs.wantFull = null; if (observing() && st.x && !st.play) obsAt(t); }
+    if (st.source === 'mic' && st.mic) { dirty = true; tlDirty = true; updateHud(); }
+    renderMicStatus();
+    if (dirty) { renderSpiral(); dirty = false; }
+    if (tlDirty) { drawTimeline(); tlDirty = false; }
+  } catch (e) { logError(e); dirty = false; tlDirty = false; }
 }
 const ro = new ResizeObserver(() => { resizeSpiral(); resizeTl(); });
 ro.observe($('#scope')); ro.observe($('#tlWrap'));
@@ -3152,6 +3187,15 @@ libInit();
   logEvent(`page loaded (${nav ? nav.type : 'navigate'}${swOK() && navigator.serviceWorker.controller ? ', from the offline copy' : ''}${navigator.onLine ? '' : ', device offline'}) · version ${APP_VERSION} (${APP_BUILD.slice(0, 6)})`);
 }
 renderVersion();
+// anything the page loads past the offline copy
+if (swOK() && window.PerformanceObserver) {
+  try {
+    new PerformanceObserver(list => {
+      if (!navigator.serviceWorker.controller) return;
+      for (const e of list.getEntries()) if (e.transferSize > 0 && !/^(blob|data):/.test(e.name)) logEvent('loaded from the network: ' + e.name.replace(/\?.*/, '').slice(0, 80));
+    }).observe({ type: 'resource', buffered: true });
+  } catch (e) {}
+}
 if (swOK()) {
   navigator.serviceWorker.addEventListener('message', e => { if (e.data && e.data.osLog) { logEvent('offline copy: ' + e.data.osLog); renderVersion(); } });
   let hadController = !!navigator.serviceWorker.controller, reloading = false;

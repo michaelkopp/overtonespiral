@@ -5,7 +5,7 @@
    comes with a new version of this file, which the browser looks for by itself when the app is opened online.
    Authors: Claude (Anthropic) and Michael Kopp. Copyright (C) 2026 Michael Kopp. SPDX-License-Identifier: GPL-3.0-or-later */
 'use strict';
-const VERSION = '2a05ac84b65e';          // the build id, set by the build from the sources of everything kept here
+const VERSION = 'c6cca9846156';          // the build id, set by the build from the sources of everything kept here
 const CACHE = 'overtone-spiral-' + VERSION;
 const CORE = ['./', 'index.html', 'manifest.webmanifest', 'icons/apple-touch-icon.png', 'icons/icon-192.png', 'icons/icon-512.png',
   'icons/icon-maskable-192.png', 'icons/icon-maskable-512.png', 'icons/favicon-64.png'];
