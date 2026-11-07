@@ -2246,32 +2246,120 @@ $('#playAllBtn').onclick = () => { if (st.play) return stopPlay(); startPlay(0, 
 /* =============================================================
    Microphone
    ============================================================= */
-const WORKLET = `class OSCap extends AudioWorkletProcessor{constructor(){super();this.b=new Float32Array(1024);this.n=0;}
-process(inp){const ch=inp[0];if(ch&&ch.length){const L=ch[0].length,k=ch.length;for(let i=0;i<L;i++){let s=0;for(let c=0;c<k;c++)s+=ch[c][i];this.b[this.n++]=s/k;if(this.n===1024){this.port.postMessage(this.b.slice(0));this.n=0;}}}return true;}}
+// The capture node posts blocks of 1024 samples.  g >= 0 marks the position in the block where the audio had
+// stopped for a while (the wall clock jumped between two render quanta), e.g. while iOS had interrupted the page's audio.
+const WORKLET = `class OSCap extends AudioWorkletProcessor{constructor(){super();this.b=new Float32Array(1024);this.n=0;this.t=0;this.g=-1;}
+process(inp){const ch=inp[0];if(ch&&ch.length){const now=Date.now();if(this.t&&now-this.t>250&&this.g<0)this.g=this.n;this.t=now;const L=ch[0].length,k=ch.length;for(let i=0;i<L;i++){let s=0;for(let c=0;c<k;c++)s+=ch[c][i];this.b[this.n++]=s/k;if(this.n===1024){this.port.postMessage({b:this.b.slice(0),g:this.g});this.n=0;this.g=-1;}}}return true;}}
 registerProcessor('os-capture',OSCap);`;
+const MIC_AUDIO = { audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } };
+const within = (p, ms) => Promise.race([Promise.resolve(p).catch(() => {}), new Promise(r => setTimeout(r, ms))]);
 
 class Mic {
-  constructor() { this.captures = []; this.onsets = []; this.best = null; this.pick = null; this.pending = null; this.liveTones = []; }
+  constructor() { this.captures = []; this.onsets = []; this.best = null; this.pick = null; this.pending = null; this.liveTones = []; this.status = 'live'; this.gapIdx = 0; this.gapSample = -1e12; }
   async start() {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) throw Object.assign(new Error('no-api'), { name: 'NoApi' });
-    this.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
-    this.ac = new (window.AudioContext || window.webkitAudioContext)();
-    await this.ac.resume();
-    this.sr = this.ac.sampleRate;
-    this.setup();
-    const src = this.ac.createMediaStreamSource(this.stream);
-    const sink = this.ac.createGain(); sink.gain.value = 0; sink.connect(this.ac.destination);
-    try {
-      const url = URL.createObjectURL(new Blob([WORKLET], { type: 'application/javascript' }));
-      await this.ac.audioWorklet.addModule(url);
-      this.node = new AudioWorkletNode(this.ac, 'os-capture', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1] });
-      this.node.port.onmessage = e => this.push(e.data);
-    } catch (e) {
-      this.node = this.ac.createScriptProcessor(2048, 1, 1);
-      this.node.onaudioprocess = ev => this.push(new Float32Array(ev.inputBuffer.getChannelData(0)));
+    await this.open(true);
+    this.wd = setInterval(() => this.watch(), 1000);
+  }
+  // The audio input (microphone stream -> audio context -> capture node).  After an interruption it is rebuilt
+  // while the analysis keeps its state: with fresh = false only the stream is renewed, with fresh = true also the context.
+  async open(fresh) {
+    const stream = await navigator.mediaDevices.getUserMedia(MIC_AUDIO);
+    if (this.closed) { stream.getTracks().forEach(t => t.stop()); return 'closed'; }
+    const old = this.stream; this.stream = stream;
+    if (old) old.getTracks().forEach(t => t.stop());
+    if (fresh || !this.ac || this.ac.state === 'closed') {
+      if (this.ac) { this.unhook(); try { this.ac.close(); } catch (e) {} }
+      const ac = (this.ac = new (window.AudioContext || window.webkitAudioContext)());
+      await within(ac.resume(), 1500);
+      if (this.sr && ac.sampleRate !== this.sr) return 'rate';
+      this.sr = ac.sampleRate;
+      if (!this.fa) this.setup();
+      const sink = ac.createGain(); sink.gain.value = 0; sink.connect(ac.destination);
+      try {
+        const url = URL.createObjectURL(new Blob([WORKLET], { type: 'application/javascript' }));
+        await ac.audioWorklet.addModule(url);
+        this.node = new AudioWorkletNode(ac, 'os-capture', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1] });
+        this.node.port.onmessage = e => this.push(e.data.b, e.data.g);
+      } catch (e) {
+        this.node = ac.createScriptProcessor(2048, 1, 1);
+        this.node.onaudioprocess = ev => this.push(new Float32Array(ev.inputBuffer.getChannelData(0)), -1);
+      }
+      this.node.connect(sink);
+      if (this.total) this.gapNext = true;
+    } else {
+      if (this.ac.state !== 'running') await within(this.ac.resume(), 1000);
+      try { this.src.disconnect(); } catch (e) {}
     }
-    src.connect(this.node); this.node.connect(sink);
-    this.src = src;
+    if (this.closed) return 'closed';
+    this.src = this.ac.createMediaStreamSource(stream); this.src.connect(this.node);
+    this.lastPush = performance.now(); this.zeros = 0;
+    return 'ok';
+  }
+  unhook() {
+    if (!this.node) return;
+    if (this.node.port) this.node.port.onmessage = null; else this.node.onaudioprocess = null;
+    try { this.node.disconnect(); } catch (e) {}
+  }
+  // Is sound arriving?  Checked after waiting `ms`.  strict: digital silence also counts as no sound
+  // (iOS can deliver zeros from a microphone it has interrupted).
+  async flowing(ms, strict) {
+    await new Promise(r => setTimeout(r, ms));
+    if (this.closed) return true;
+    const t = this.stream && this.stream.getAudioTracks()[0];
+    return this.ac.state === 'running' && performance.now() - this.lastPush < 400 && !!t && t.readyState === 'live' && !(strict && this.zeros > 0.3 * this.sr);
+  }
+  watch() {                               // once a second: has the input stopped although the page is visible?
+    if (this.closed || this.busy || this.status === 'stalled' || document.hidden) return;
+    const t = this.stream && this.stream.getAudioTracks()[0];
+    if (this.ac.state !== 'running' || performance.now() - this.lastPush > 1500 || !t || t.readyState !== 'live') this.revive(false);
+  }
+  // Bring the input back after an interruption (iOS stops the page's audio while the screen is off, and does not
+  // always restart it), from the lightest remedy to a new context.  If nothing works without a tap, ask for one.
+  async revive(tap) {
+    if (this.closed || this.busy) return;
+    this.busy = true;
+    try {
+      if (!tap && await this.flowing(500, true)) return;
+      this.gap(this.total);                 // what was recorded before the interruption is complete as it is
+      this.status = 'reconnecting'; this.askTap();
+      if (this.ac.state !== 'running') await within(this.ac.resume(), 1000);
+      else { await within(this.ac.suspend(), 500); await within(this.ac.resume(), 1000); }   // WebKit: a context that says 'running' but has stopped
+      if (await this.flowing(600, true)) return;
+      let r = await this.open(false);
+      if (r === 'ok' && await this.flowing(800, true)) return;
+      r = await this.open(true);
+      if (r === 'rate') { this.status = 'live'; this.busy = false; restartMic(); return; }
+      if (r === 'closed' || await this.flowing(800, false)) return;
+      this.status = 'stalled';
+    } catch (e) { this.status = 'stalled'; }
+    finally {
+      this.busy = false;
+      if (this.status === 'reconnecting') this.status = 'live';
+      if (this.status === 'live') this.dropTap();
+    }
+  }
+  // A tap or key press allows the page to start audio, where iOS requires it: resume at once, inside the event.
+  askTap() {
+    if (this.closed || this.tapFn) return;
+    const fn = this.tapFn = e => {
+      if (e.target && e.target.closest && e.target.closest('#micBtn')) return;   // the button itself switches the microphone off
+      if (this.ac.state !== 'running') this.ac.resume().catch(() => {});
+      if (!this.busy) { this.dropTap(); this.revive(true); }
+    };
+    for (const ev of ['pointerup', 'touchend', 'keydown']) document.addEventListener(ev, fn, true);
+  }
+  dropTap() {
+    if (!this.tapFn) return;
+    for (const ev of ['pointerup', 'touchend', 'keydown']) document.removeEventListener(ev, this.tapFn, true);
+    this.tapFn = null;
+  }
+  pageShown() { if (this.status === 'stalled') { this.dropTap(); this.status = 'live'; } this.revive(false); }
+  // The input stopped and came back: a ring-out recorded before is finished with what it has, and no later
+  // measurement window reaches back across the gap.
+  gap(at) {
+    if (this.pending) this.finalize(this.nextIdx);
+    this.gapSample = at; this.gapIdx = Math.ceil(at / this.H);
   }
   setup() {
     const o = frameOpts(this.sr);
@@ -2296,8 +2384,13 @@ class Mic {
     if (this.observe) this.liveTones = [];
   }
   reconfigure() { this.setup(); this.captures = []; this.best = null; this.pick = null; this.onsets = []; }
-  push(chunk) {
+  push(chunk, g) {
+    if (!this.fa || this.closed) return;
     const n = chunk.length, R = this.RING;
+    this.lastPush = performance.now();
+    let z = true; for (let i = 0; i < n; i++) if (chunk[i] !== 0) { z = false; break; }
+    this.zeros = z ? (this.zeros || 0) + n : 0;
+    if (this.gapNext || g >= 0) { this.gapNext = false; this.gap(this.total + Math.max(0, g)); }
     let w = this.total % R;
     for (let i = 0; i < n; i++) { this.ring[w++] = chunk[i]; if (w === R) w = 0; }
     this.total += n;
@@ -2344,6 +2437,7 @@ class Mic {
     if (this.pending && idx + 1 >= this.pending.bMax) this.finalize(idx + 1);
   }
   onOnset(o) {
+    if (o.sample < this.gapSample + 0.25 * this.sr) return;        // the step in level where the input came back
     const t = o.sample / this.sr; this.onsets.push(t);
     if (this.onsets.length > 200) this.onsets.shift();
     if (this.pending) { if (o.peak < this.pending.peak - 3) return; this.finalize(Math.floor(o.sample / this.H) - Math.ceil(this.N / this.H)); }
@@ -2368,7 +2462,7 @@ class Mic {
   finish(res, onset) {                    // background check + high-resolution refinement
     const wopt = { hopSec: this.hopSec, binHz: this.fa.binHz }, idx = this.nextIdx;
     if (onset != null) {
-      const preB = Math.floor((onset * this.sr - this.N) / this.H), preA = Math.max(this.fr0, preB - Math.round(0.5 / this.hopSec));
+      const preB = Math.floor((onset * this.sr - this.N) / this.H), preA = Math.max(this.fr0, this.gapIdx, preB - Math.round(0.5 / this.hopSec));
       const ref = []; for (let i = preA; i <= preB; i++) ref.push(i);
       C.markBackground(this.frames, this.fr0, ref, res, wopt, 'attack');
     }
@@ -2413,7 +2507,7 @@ class Mic {
     if (now - this.lastLive > 300) {
       this.lastLive = now;
       // live quality: tones tracked over the last 1.5 s
-      const res = this.windowResult(idx - Math.round(1.5 / this.hopSec), idx);
+      const res = this.windowResult(Math.max(this.gapIdx, idx - Math.round(1.5 / this.hopSec)), idx);
       this.liveTones = res ? res.tones.filter(t => measOk(t) && t.last >= idx - Math.round(0.25 / this.hopSec)).sort((a, b) => a.f - b.f) : [];
       // the capture so far: how many partials already pass the listing criteria (for the status line), and
       // the end of a capture once the sound has died away
@@ -2430,13 +2524,14 @@ class Mic {
       this.lastSustain = now;
       const D = Math.round(MEAS.maxWindow / this.hopSec);
       const lastEnd = this.captures.length ? Math.round(this.captures[this.captures.length - 1].t1 / this.hopSec) : -1e9;
-      if (idx - D > this.fr0 && idx - D > lastEnd - D / 2 && this.liveTones.length) {
+      if (idx - D > this.fr0 && idx - D >= this.gapIdx && idx - D > lastEnd - D / 2 && this.liveTones.length) {
         const c = this.makeCapture('sustain', idx - D, idx, null);
         if (c) this.addCapture(c);
       }
     }
   }
   async stop() {
+    this.closed = true; clearInterval(this.wd); this.dropTap(); this.unhook();
     try { this.stream.getTracks().forEach(t => t.stop()); } catch (e) {}
     try { await this.ac.close(); } catch (e) {}
   }
@@ -2446,7 +2541,9 @@ let micStatusHtml = '';
 function renderMicStatus() {
   const el = $('#micStatus'), m = st.mic;
   let html = '', cls = '';
-  if (m && !observing()) {
+  if (m && m.status === 'stalled') html = '<span><b>Microphone interrupted</b> · tap anywhere to continue.</span>';
+  else if (m && m.status === 'reconnecting') html = '<span><b>Reconnecting the microphone…</b> If this takes more than a few seconds, tap anywhere.</span>';
+  else if (m && !observing()) {
     const now = m.total / m.sr, n = c => (c.result ? listTones(c.result).length : c.count);
     if (m.pending) {
       const el2 = Math.max(0, now - m.pending.onset), fr = Math.min(1, el2 / MEAS.maxWindow);
@@ -2510,6 +2607,10 @@ async function stopMic() {
   refreshAll();
 }
 $('#micBtn').onclick = () => (st.mic ? stopMic() : startMic());
+async function restartMic() { if (st.mic) { await stopMic(); await startMic(); } }
+// iOS interrupts the page's audio while the screen is off or another app is in front; check the input on return
+document.addEventListener('visibilitychange', () => { if (st.mic && !document.hidden) st.mic.pageShown(); });
+window.addEventListener('pageshow', e => { if (e.persisted && st.mic && !document.hidden) st.mic.pageShown(); });
 function setMicSpiral(v) { st.micSpiral = v; $('#segLive').setAttribute('aria-pressed', v === 'live'); $('#segCap').setAttribute('aria-pressed', v === 'capture'); dirty = true; updateHud(); }
 $('#segLive').onclick = () => setMicSpiral('live');
 $('#segCap').onclick = () => setMicSpiral('capture');
