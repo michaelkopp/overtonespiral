@@ -37,8 +37,8 @@ the file onto the page.
 
 On an iPhone, open the app in Safari, tap **Share → Add to Home Screen**, and open it once from the
 home screen while online. From then on it starts without a network connection: a service worker keeps
-the page, its icons and its fonts in the phone's cache and serves them from there, without using the
-network. A new version is picked up when the app is opened with a connection; if it is still running
+the page (its fonts are part of it) and its icons in the phone's cache and serves them from there,
+without using the network. A new version is picked up when the app is opened with a connection; if it is still running
 in the background, close it in the app switcher first. (Android: Chrome's menu → *Add to Home screen*
 or *Install app*.) The home-screen app keeps its own saved bowls, separate from Safari's; use *Export*
 and *Import* under *Saved bowls* to move them across.
@@ -150,3 +150,7 @@ the research and development.
 ## Licence
 
 GPL-3.0-or-later. See [`LICENSE`](LICENSE).
+
+The page embeds subsets of three fonts under the SIL Open Font License 1.1: Spectral (Copyright 2017 The
+Spectral Project Authors), Hanken Grotesk (Copyright 2021 The Hanken Grotesk Project Authors) and Azeret Mono
+(Copyright 2021 The Azeret Project Authors).
