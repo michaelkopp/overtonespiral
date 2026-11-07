@@ -3,6 +3,15 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="Measures the fundamental and the overtones of singing bowls and shows the spectrum on a spiral, also in real time.">
+<meta name="theme-color" content="#0c0e14">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Overtones">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" sizes="64x64" href="icons/favicon-64.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <!--
   Overtone Spiral: measures the fundamental and the dominant overtones of an instrument
   (made for crystal singing bowls) from a recording or the microphone, and shows the
@@ -63,7 +72,7 @@ button, select, input { font: inherit; color: inherit; }
 .site-foot a { color: var(--quartz); text-underline-offset: 3px; }
 
 /* header */
-.topbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; padding: 10px 16px; border-bottom: 1px solid var(--rule); }
+.topbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; padding: 10px 16px; padding-top: max(10px, env(safe-area-inset-top)); padding-left: max(16px, env(safe-area-inset-left)); padding-right: max(16px, env(safe-area-inset-right)); border-bottom: 1px solid var(--rule); }
 .brand { display: flex; align-items: baseline; gap: 12px; min-width: 0; flex: 1 1 260px; }
 .brand h1 { margin: 0; font: italic 500 22px/1 var(--display); letter-spacing: 0.01em; white-space: nowrap; }
 .brand h1 b { font-style: normal; font-weight: 600; }
@@ -2971,6 +2980,10 @@ requestAnimationFrame(loop);
 if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { dirty = true; tlDirty = true; });
 downloadsCap();
 libInit();
+// Offline use (e.g. added to the home screen): a service worker keeps the app and its fonts in the browser's cache.
+if ('serviceWorker' in navigator && window.self === window.top && (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1')) {
+  window.addEventListener('load', () => { navigator.serviceWorker.register('sw.js').catch(() => {}); });
+}
 window.__os = { st, S, C, listTones, noteOf, toHeights, displayPower, drawSpiral, buildText, NCELLS };   // for debugging and scripted figures
 })();
 </script>
