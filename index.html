@@ -1436,7 +1436,7 @@ const measOk = t => t.conf >= MEAS.thr && t.rel >= -MEAS.dyn;       // a confide
 function cellCfg() { return { f0: F0, cellCents: CELL_CENTS, range: 100 }; }
 function confColor(c) { return c >= 0.85 ? 'var(--good)' : c >= 0.6 ? 'var(--warn)' : 'var(--bad)'; }
 /* ---------------- version and event log (Settings → About this copy) ---------------- */
-const APP_VERSION = '1.3', APP_BUILD = 'cfc82cffb0c2';    // set by the build; APP_BUILD also names the offline copy
+const APP_VERSION = '1.4', APP_BUILD = '6bc8f2034f5a';    // set by the build; APP_BUILD also names the offline copy
 const LOG_KEY = 'overtone-spiral-log';
 let evlog = []; try { evlog = JSON.parse(localStorage.getItem(LOG_KEY) || '[]'); } catch (e) {}
 function logEvent(msg) {
@@ -2313,28 +2313,30 @@ class Mic {
     this.wd = setInterval(() => this.watch(), 1000);
   }
   // The audio input (microphone stream -> audio context -> capture node).  After an interruption it is rebuilt
-  // while the analysis keeps its state: the old input is released first, as switching the microphone off and on
-  // does, then a new stream and a new context are made.  `limit` (ms) bounds the wait for the microphone.
-  release() {
+  // while the analysis keeps its state: a new context, either for the stream in hand (ask = false) or, as switching
+  // the microphone off and on does, for a new stream (ask = true).  Asking iOS for the microphone can bring up a
+  // system dialog (in flight mode, the one about the missing connection), so it is done only when the microphone
+  // is switched on, or after a tap.  `limit` (ms) bounds the wait for the microphone.
+  release(keepStream) {
     this.unhook();
-    try { this.stream.getTracks().forEach(t => t.stop()); } catch (e) {}
+    if (!keepStream) try { this.stream.getTracks().forEach(t => t.stop()); } catch (e) {}
     try { const c = this.ac.close(); if (c && c.catch) c.catch(() => {}); } catch (e) {}   // not awaited: after an interruption it may never settle
   }
-  async open(fresh, limit) {
-    if (fresh && this.ac) { if (this.total) logEvent('microphone: releasing the input'); this.release(); }
-    if (this.total) logEvent('microphone: asking for the microphone');
-    const ask = navigator.mediaDevices.getUserMedia(MIC_AUDIO);
-    const stream = limit ? await Promise.race([ask, new Promise(r => setTimeout(() => r(null), limit))]) : await ask;
-    if (!stream) {
-      ask.then(s => s.getTracks().forEach(t => t.stop()), () => {});
-      throw Object.assign(new Error('the microphone did not answer'), { name: 'Timeout' });
+  async open(ask, limit) {
+    let stream = this.stream;
+    if (this.ac) { if (this.total) logEvent(ask ? 'microphone: releasing the input' : 'microphone: new audio context for the same microphone'); this.release(!ask); }
+    if (ask) {
+      if (this.total) logEvent('microphone: asking for the microphone');
+      const req = navigator.mediaDevices.getUserMedia(MIC_AUDIO);
+      stream = limit ? await Promise.race([req, new Promise(r => setTimeout(() => r(null), limit))]) : await req;
+      if (!stream) {
+        req.then(s => s.getTracks().forEach(t => t.stop()), () => {});
+        throw Object.assign(new Error('the microphone did not answer'), { name: 'Timeout' });
+      }
+      if (this.closed) { stream.getTracks().forEach(t => t.stop()); return 'closed'; }
+      this.stream = stream;
     }
-    if (this.closed) { stream.getTracks().forEach(t => t.stop()); return 'closed'; }
-    const old = this.stream; this.stream = stream;
-    if (old && old !== stream) old.getTracks().forEach(t => t.stop());
-    if (fresh || !this.ac || this.ac.state === 'closed') {
-      if (this.ac && !fresh) { this.unhook(); try { const c = this.ac.close(); if (c && c.catch) c.catch(() => {}); } catch (e) {} }
-      if (this.total) logEvent('microphone: new audio context');
+    {
       const ac = (this.ac = new (window.AudioContext || window.webkitAudioContext)());
       await within(ac.resume(), 1500);
       if (this.sr && ac.sampleRate !== this.sr) return 'rate';
@@ -2353,9 +2355,6 @@ class Mic {
       }
       this.node.connect(sink);
       if (this.total) this.gapNext = true;
-    } else {
-      if (this.ac.state !== 'running') await within(this.ac.resume(), 1000);
-      try { this.src.disconnect(); } catch (e) {}
     }
     if (this.closed) return 'closed';
     this.src = this.ac.createMediaStreamSource(stream); this.src.connect(this.node);
@@ -2397,21 +2396,28 @@ class Mic {
     this.busy = true;
     let how = '';
     try {
-      if (!tap && await this.flowing(500, true)) return;
+      // first give the phone a moment to bring the sound back by itself, as it usually does after the screen is on
+      if (!tap) for (let i = 1; i <= 10; i++) {
+        if (this.ac.state !== 'running' && this.ac.state !== 'closed') this.ac.resume().catch(() => {});
+        if (await this.flowing(250, true)) { if (i > 2) logEvent(`microphone back by itself after ${(i * 0.25).toFixed(2)} s`); return; }
+      }
       logEvent(`microphone interrupted (${tap ? 'tap' : why || 'checked on return'}; audio ${this.ac.state}): reconnecting`);
       this.lastRevive = performance.now();
       this.gap(this.total);                 // what was recorded before the interruption is complete as it is
       this.status = 'reconnecting'; this.askTap();
-      if (this.ac.state !== 'running' && this.ac.state !== 'closed') {
-        how = 'resuming the audio';
-        logEvent('microphone: resuming the audio');
-        await within(this.ac.resume(), 1000);
-        if (await this.flowing(600, true)) return;
+      const t = this.stream && this.stream.getAudioTracks()[0];
+      if (!tap && t && t.readyState === 'live') {
+        how = 'a new audio context';         // the same microphone: no new request to the system
+        const r = await this.open(false);
+        if (r === 'rate') { this.status = 'live'; this.busy = false; restartMic(); return; }
+        if (r === 'closed' || await this.flowing(1000, true)) return;
       }
-      how = 'restarting the microphone';     // as switching it off and on
-      const r = await this.open(true, 5000);
-      if (r === 'rate') { this.status = 'live'; this.busy = false; restartMic(); return; }
-      if (r === 'closed' || await this.flowing(800, false)) return;
+      if (tap) {
+        how = 'restarting the microphone';   // as switching it off and on, at the user's tap
+        const r = await this.open(true, 8000);
+        if (r === 'rate') { this.status = 'live'; this.busy = false; restartMic(); return; }
+        if (r === 'closed' || await this.flowing(800, false)) return;
+      }
       this.status = 'stalled';
     } catch (e) { this.status = 'stalled'; how += ' (' + (e.name || e.message) + ')'; }
     finally {
