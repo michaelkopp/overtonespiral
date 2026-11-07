@@ -161,6 +161,10 @@ tr.fading td { opacity: .42; transition: opacity .4s; }                     /* O
 .field { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 4px 12px; margin: 8px 0; font-size: 13px; }
 .field small { grid-column: 1 / -1; color: var(--faint); font-size: 11.5px; }
 .set-note { margin: -4px 0 10px; color: var(--faint); font-size: 11.5px; line-height: 1.45; }
+.about { font-size: 12.5px; line-height: 1.5; color: var(--dim); }
+.about b { color: var(--chalk); font-weight: 600; }
+.logbox { margin: 8px 0; max-height: 180px; overflow: auto; background: var(--raise); border: 1px solid var(--rule); border-radius: 6px; padding: 6px 8px; font: 10.5px/1.45 var(--mono); color: var(--dim); white-space: pre-wrap; word-break: break-word; }
+.logbtns { display: flex; gap: 8px; }
 .field input[type=number], .field select { width: 160px; height: 30px; background: var(--raise); border: 1px solid var(--rule); border-radius: 6px; padding: 0 8px; }
 .field input[type=range] { width: 150px; accent-color: var(--quartz); }
 .field output { font: 12px var(--mono); color: var(--chalk); min-width: 44px; display: inline-block; text-align: right; }
@@ -319,7 +323,7 @@ tr.fading td { opacity: .42; transition: opacity .4s; }                     /* O
     </section>
   </div>
 
-  <footer class="site-foot">Overtone Spiral is free software (GPL-3.0) · <a href="https://github.com/michaelkopp/overtonespiral" target="_blank" rel="noopener">Source code and paper on GitHub</a></footer>
+  <footer class="site-foot">Overtone Spiral <span id="verTxt"></span> · free software (GPL-3.0) · <a href="https://github.com/michaelkopp/overtonespiral" target="_blank" rel="noopener">Source code and paper on GitHub</a></footer>
 
   <div class="settings" id="settings" hidden role="dialog" aria-label="Settings">
     <h3>List of partials</h3>
@@ -341,6 +345,11 @@ tr.fading td { opacity: .42; transition: opacity .4s; }                     /* O
     <div class="field"><label for="sOvl">Saved-bowl labels</label><select id="sOvl"><option value="notes">Note names</option><option value="none">None</option></select><small>Note names beside the coloured rings, where there is room.</small></div>
     <div class="field"><label for="sSpell">Accidentals</label><select id="sSpell"><option value="sharp">Sharps (A#)</option><option value="flat">Flats (Bb)</option></select></div>
     <div class="field"><label for="sBg">Exported image</label><select id="sBg"><option value="dark">Dark background</option><option value="light">Light background</option></select></div>
+    <h3>About this copy</h3>
+    <div class="about" id="about"></div>
+    <p class="set-note" style="margin-top:8px">Event log: when the page was loaded, hidden and shown again, what happened to the microphone, and every request this app made to the network. It stays on this device.</p>
+    <pre class="logbox" id="logBox"></pre>
+    <div class="logbtns"><button class="btn small" id="logCopy">Copy log</button><button class="btn small" id="logClear">Clear log</button></div>
   </div>
 
   <div class="drop" id="drop" hidden>Drop an audio file to analyse it</div>
@@ -1416,6 +1425,32 @@ function anaOpts() { return { threshold: MEAS.thr, dynRange: MEAS.dyn, minDur: M
 const measOk = t => t.conf >= MEAS.thr && t.rel >= -MEAS.dyn;       // a confident partial, by the fixed criteria
 function cellCfg() { return { f0: F0, cellCents: CELL_CENTS, range: 100 }; }
 function confColor(c) { return c >= 0.85 ? 'var(--good)' : c >= 0.6 ? 'var(--warn)' : 'var(--bad)'; }
+/* ---------------- version and event log (Settings → About this copy) ---------------- */
+const APP_VERSION = '1.1', APP_BUILD = '2a05ac84b65e';    // set by the build; APP_BUILD also names the offline copy
+const LOG_KEY = 'overtone-spiral-log';
+let evlog = []; try { evlog = JSON.parse(localStorage.getItem(LOG_KEY) || '[]'); } catch (e) {}
+function logEvent(msg) {
+  const d = new Date(), p = n => String(n).padStart(2, '0');
+  evlog.push(`${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}  ${msg}`);
+  if (evlog.length > 300) evlog.splice(0, evlog.length - 300);
+  try { localStorage.setItem(LOG_KEY, JSON.stringify(evlog)); } catch (e) {}
+  if (!$('#settings').hidden) renderAbout();
+}
+const swOK = () => 'serviceWorker' in navigator && window.self === window.top && (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1');
+async function offlineState() {
+  if (!swOK()) return { short: '', long: 'Offline use is not available in this view.' };
+  let keys = []; try { keys = (await caches.keys()).filter(k => k.startsWith('overtone-spiral-')); } catch (e) {}
+  const mine = keys.includes('overtone-spiral-' + APP_BUILD), ctl = !!navigator.serviceWorker.controller;
+  if (ctl && mine) return { short: 'available offline', long: 'Available offline: this version is kept on the device and opens without a network connection.' };
+  if (ctl) return { short: 'offline copy differs', long: `The offline copy on this device (${keys.map(k => k.slice(16, 22)).join(', ') || 'none'}) is not this version; close the app and open it again with a connection.` };
+  return { short: 'not yet offline', long: keys.length ? 'The offline copy is being prepared; it is used from the next time the app is opened.' : 'Not yet available offline. Open the app once with a connection.' };
+}
+async function renderAbout() {
+  const o = await offlineState();
+  $('#about').innerHTML = `<b>Version ${APP_VERSION}</b> (build ${APP_BUILD.slice(0, 6)})<br>${o.long}<br>Network: ${navigator.onLine ? 'connected' : 'offline'}`;
+  const box = $('#logBox'); box.textContent = evlog.slice(-120).join('\n') || '(empty)'; box.scrollTop = box.scrollHeight;
+}
+async function renderVersion() { const o = await offlineState(); $('#verTxt').textContent = `${APP_VERSION} (${APP_BUILD.slice(0, 6)})` + (o.short ? ' · ' + o.short : ''); }
 function toast(msg, ms = 4200) { const t = $('#toast'); t.textContent = msg; t.hidden = false; clearTimeout(toast.h); toast.h = setTimeout(() => { t.hidden = true; }, ms); }
 function setBusy(on, txt, frac) {
   st.busy = on; $('#busy').hidden = !on;
@@ -2312,37 +2347,45 @@ class Mic {
     const flowing = performance.now() - this.lastPush < 400 && this.zeros < 0.3 * this.sr;
     if (this.status === 'stalled') {      // waiting for a tap, but the interruption may also end by itself
       if (this.ac.state !== 'running') this.ac.resume().catch(() => {});
-      else if (flowing) { this.status = 'live'; this.dropTap(); }
+      else if (flowing) { this.status = 'live'; this.dropTap(); logEvent('microphone back by itself'); }
       return;
     }
     const t = this.stream && this.stream.getAudioTracks()[0];
     // digital silence: an interrupted microphone can deliver zeros (not given up on unless a reconnection left it so)
     const silent = this.zeros > 1.5 * this.sr && !this.zeroOk;
-    if (this.ac.state !== 'running' || performance.now() - this.lastPush > 1500 || !t || t.readyState !== 'live' || silent) this.revive(false);
+    const why = this.ac.state !== 'running' ? `audio ${this.ac.state}` : performance.now() - this.lastPush > 1500 ? 'no sound arriving'
+      : !t || t.readyState !== 'live' ? 'microphone track ended' : silent ? 'microphone delivers digital silence' : '';
+    if (why) this.revive(false, why);
   }
   // Bring the input back after an interruption (iOS stops the page's audio while the screen is off, and does not
   // always restart it), from the lightest remedy to a new context.  If nothing works without a tap, ask for one.
-  async revive(tap) {
+  async revive(tap, why) {
     if (this.closed || this.busy) return;
     this.busy = true;
+    let how = '';
     try {
       if (!tap && await this.flowing(500, true)) return;
+      logEvent(`microphone interrupted (${tap ? 'tap' : why || 'checked on return'}; audio ${this.ac.state}): reconnecting`);
       this.gap(this.total);                 // what was recorded before the interruption is complete as it is
       this.status = 'reconnecting'; this.askTap();
+      how = 'resuming the audio';
       if (this.ac.state !== 'running') await within(this.ac.resume(), 1000);
       else { await within(this.ac.suspend(), 500); await within(this.ac.resume(), 1000); }   // WebKit: a context that says 'running' but has stopped
       if (await this.flowing(600, true)) return;
+      how = 'a new microphone stream';
       let r = await this.open(false);
       if (r === 'ok' && await this.flowing(800, true)) return;
+      how = 'a new audio context';
       r = await this.open(true);
       if (r === 'rate') { this.status = 'live'; this.busy = false; restartMic(); return; }
       if (r === 'closed' || await this.flowing(800, false)) return;
       this.status = 'stalled';
-    } catch (e) { this.status = 'stalled'; }
+    } catch (e) { this.status = 'stalled'; how += ' (' + (e.name || e.message) + ')'; }
     finally {
       this.busy = false;
       if (this.status === 'reconnecting') this.status = 'live';
       if (this.status === 'live') { this.dropTap(); if (this.zeros > 0.3 * this.sr) this.zeroOk = true; }   // this input is silent as it is
+      if (how && !this.closed) logEvent(this.status === 'stalled' ? `microphone not back after ${how}: waiting for a tap` : `microphone back after ${how}`);
     }
   }
   // A tap or key press allows the page to start audio, where iOS requires it: resume at once, inside the event.
@@ -2598,6 +2641,7 @@ async function startMic() {
     return;
   }
   st.mic = m; st.source = 'mic'; st.view = 'live'; st.result = null; st.cells = null; st.sel = null; st.shown = null;
+  logEvent(`microphone on (${(m.sr / 1000).toFixed(1)} kHz, ${observing() ? 'Observe' : 'Measure'})`);
   setMicSpiral('live');
   $('#micBtn').setAttribute('aria-pressed', 'true'); $('#micTxt').textContent = 'Stop microphone';
   $('#srcLabel').textContent = `Microphone · ${(m.sr / 1000).toFixed(1)} kHz`;
@@ -2605,6 +2649,7 @@ async function startMic() {
 }
 async function stopMic() {
   const m = st.mic; if (!m) return;
+  logEvent('microphone off');
   await m.stop();
   $('#micBtn').setAttribute('aria-pressed', 'false'); $('#micTxt').textContent = 'Microphone';
   // keep the result on screen
@@ -2616,9 +2661,13 @@ async function stopMic() {
 $('#micBtn').onclick = () => (st.mic ? stopMic() : startMic());
 async function restartMic() { if (st.mic) { await stopMic(); await startMic(); } }
 // iOS interrupts the page's audio while the screen is off or another app is in front; check the input on return
-document.addEventListener('visibilitychange', () => { if (st.mic && !document.hidden) st.mic.pageShown(); });
-window.addEventListener('pageshow', e => { if (e.persisted && st.mic && !document.hidden) st.mic.pageShown(); });
-window.addEventListener('focus', () => { if (st.mic && !document.hidden) st.mic.pageShown(); });   // e.g. after a system alert
+document.addEventListener('visibilitychange', () => { logEvent(document.hidden ? 'page hidden' : 'page visible'); if (st.mic && !document.hidden) st.mic.pageShown(); });
+window.addEventListener('pagehide', e => logEvent('page closed' + (e.persisted ? ' (kept in memory)' : '')));
+window.addEventListener('online', () => logEvent('device online'));
+window.addEventListener('offline', () => logEvent('device offline'));
+window.addEventListener('blur', () => logEvent('focus lost'));
+window.addEventListener('pageshow', e => { if (e.persisted) logEvent('page restored from memory'); if (e.persisted && st.mic && !document.hidden) st.mic.pageShown(); });
+window.addEventListener('focus', () => { logEvent('focus back'); if (st.mic && !document.hidden) st.mic.pageShown(); });   // e.g. after a system alert
 function setMicSpiral(v) { st.micSpiral = v; $('#segLive').setAttribute('aria-pressed', v === 'live'); $('#segCap').setAttribute('aria-pressed', v === 'capture'); dirty = true; updateHud(); }
 $('#segLive').onclick = () => setMicSpiral('live');
 $('#segCap').onclick = () => setMicSpiral('capture');
@@ -2913,7 +2962,7 @@ function buildText() {
   L.push('Overtone Spiral — ' + (obs ? 'partials sounding now' : 'dominant partials'));
   L.push('');
   L.push(`Reference:   A4 = ${(+S.a4).toFixed(2)} Hz, 12-tone equal temperament`);
-  L.push('Exported:    ' + new Date().toLocaleString());
+  L.push('Exported:    ' + new Date().toLocaleString() + ' · Overtone Spiral ' + APP_VERSION + ' (' + APP_BUILD.slice(0, 6) + ')');
   if (obs && st.obs.has) {
     const P = obsPeaks();
     L.push('');
@@ -3045,7 +3094,13 @@ for (const [id, k] of Object.entries(F)) {
     }
   });
 }
-$('#setBtn').onclick = () => { const p = $('#settings'); p.hidden = !p.hidden; $('#setBtn').setAttribute('aria-expanded', String(!p.hidden)); };
+$('#setBtn').onclick = () => { const p = $('#settings'); p.hidden = !p.hidden; $('#setBtn').setAttribute('aria-expanded', String(!p.hidden)); if (!p.hidden) renderAbout(); };
+$('#logCopy').onclick = async () => {
+  const text = `Overtone Spiral ${APP_VERSION} (build ${APP_BUILD})\n${navigator.userAgent}\n\n` + evlog.join('\n');
+  try { await navigator.clipboard.writeText(text); toast('The log is copied; paste it into a message.'); }
+  catch (e) { const r = document.createRange(); r.selectNodeContents($('#logBox')); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); toast('Select and copy the log by hand.'); }
+};
+$('#logClear').onclick = () => { evlog = []; try { localStorage.removeItem(LOG_KEY); } catch (e) {} renderAbout(); };
 document.addEventListener('pointerdown', e => { const p = $('#settings'); if (!p.hidden && !p.contains(e.target) && e.target !== $('#setBtn')) { p.hidden = true; $('#setBtn').setAttribute('aria-expanded', 'false'); } });
 
 /* =============================================================
@@ -3092,10 +3147,17 @@ libInit();
 // Offline use (e.g. added to the home screen): a service worker keeps the app and its fonts in the browser's cache.
 // When the app is opened with a connection, the browser checks for a new version; once that has been installed,
 // an idle page (nothing loaded, microphone off) reloads itself to use it.
-if ('serviceWorker' in navigator && window.self === window.top && (location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1')) {
+{
+  const nav = performance.getEntriesByType && performance.getEntriesByType('navigation')[0];
+  logEvent(`page loaded (${nav ? nav.type : 'navigate'}${swOK() && navigator.serviceWorker.controller ? ', from the offline copy' : ''}${navigator.onLine ? '' : ', device offline'}) · version ${APP_VERSION} (${APP_BUILD.slice(0, 6)})`);
+}
+renderVersion();
+if (swOK()) {
+  navigator.serviceWorker.addEventListener('message', e => { if (e.data && e.data.osLog) { logEvent('offline copy: ' + e.data.osLog); renderVersion(); } });
   let hadController = !!navigator.serviceWorker.controller, reloading = false;
   navigator.serviceWorker.addEventListener('controllerchange', () => {
     const sw = navigator.serviceWorker.controller;
+    logEvent('new offline copy in use'); renderVersion();
     if (hadController && !reloading && sw && !st.source && !st.mic && !st.play) {
       reloading = true;                   // once the new version is fully active
       const go = () => { if (!st.source && !st.mic && !st.play) location.replace(location.href); };

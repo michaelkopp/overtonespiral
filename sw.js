@@ -5,13 +5,16 @@
    comes with a new version of this file, which the browser looks for by itself when the app is opened online.
    Authors: Claude (Anthropic) and Michael Kopp. Copyright (C) 2026 Michael Kopp. SPDX-License-Identifier: GPL-3.0-or-later */
 'use strict';
-const VERSION = '16998e6f1b1f';          // set by the build from the app, this file, the manifest and the icons
+const VERSION = '2a05ac84b65e';          // the build id, set by the build from the sources of everything kept here
 const CACHE = 'overtone-spiral-' + VERSION;
 const CORE = ['./', 'index.html', 'manifest.webmanifest', 'icons/apple-touch-icon.png', 'icons/icon-192.png', 'icons/icon-512.png',
   'icons/icon-maskable-192.png', 'icons/icon-maskable-512.png', 'icons/favicon-64.png'];
 const FONT_CSS = 'https://fonts.googleapis.com/css2?family=Azeret+Mono:wght@400;500&family=Hanken+Grotesk:wght@400;500;600&family=Spectral:ital,wght@0,500;0,600;1,400;1,500&display=swap';
 const FONT_HOSTS = ['fonts.googleapis.com', 'fonts.gstatic.com'];
 const SCOPE = new URL(self.registration.scope).pathname;
+// notes for the app's event log (Settings → About this copy)
+const say = msg => self.clients.matchAll({ includeUncontrolled: true, type: 'window' }).then(cs => cs.forEach(c => c.postMessage({ osLog: msg }))).catch(() => {});
+const short = u => { const x = new URL(u); return (x.origin === location.origin ? '' : x.host) + x.pathname.slice(0, 60); };
 
 // the web fonts: the stylesheet, then every font file it names (optional: the app falls back to system fonts);
 // taken over from the cache of an earlier version where possible
@@ -30,9 +33,11 @@ async function cacheFonts(cache) {
 
 self.addEventListener('install', event => {
   event.waitUntil((async () => {
+    say(`installing build ${VERSION.slice(0, 6)}`);
     const cache = await caches.open(CACHE);
     await cache.addAll(CORE.map(u => new Request(u, { cache: 'reload' })));
     try { await cacheFonts(cache); } catch (e) { /* offline or blocked: system fonts are used */ }
+    say(`build ${VERSION.slice(0, 6)} installed, ${(await cache.keys()).length} files kept`);
     await self.skipWaiting();
   })());
 });
@@ -44,18 +49,23 @@ self.addEventListener('activate', event => {
   })());
 });
 
-// From the cache; the network only for what is not there (the first visit, before the cache is filled), and
-// not at all while the device reports that it is offline.
+// From the cache. The network only for a file of the app that is not there (the first visit, before the cache
+// is filled), and not while the device reports that it is offline; web fonts only when the app is installed.
 async function cached(request, key) {
   const cache = await caches.open(CACHE);
-  const hit = await cache.match(key || request, { ignoreSearch: new URL(request.url).origin === location.origin, ignoreVary: true });
+  const url = new URL(request.url), same = url.origin === location.origin;
+  const hit = await cache.match(key || request, { ignoreSearch: same, ignoreVary: true });
   if (hit) return hit;
-  if (self.navigator.onLine === false) {
+  if (!same || self.navigator.onLine === false) {
+    say(`not in the offline copy, not fetched: ${short(request.url)}`);
     return request.destination === 'style' ? new Response('', { headers: { 'Content-Type': 'text/css' } }) : Response.error();
   }
-  const res = await fetch(request);
-  if (res && (res.ok || res.type === 'opaque') && !key) cache.put(request, res.clone());
-  return res;
+  say(`network request: ${short(request.url)}`);
+  try {
+    const res = await fetch(request);
+    if (res && res.ok && !key) cache.put(request, res.clone());
+    return res;
+  } catch (e) { say(`network request failed: ${short(request.url)}`); throw e; }
 }
 
 self.addEventListener('fetch', event => {

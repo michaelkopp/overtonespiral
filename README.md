@@ -47,6 +47,10 @@ If the phone interrupts the microphone (the screen goes dark, a call comes in), 
 when you return. Should the phone not allow that without a touch, the status line asks you to tap
 anywhere.
 
+The version is shown at the foot of the page, with whether this copy is available offline.
+*Settings → About this copy* says more and keeps a short event log (page loads, interruptions of the
+microphone, and every request the app made to the network), which *Copy log* puts on the clipboard.
+
 ### Observing in real time
 
 1. Click **Observe** at the top of the page.
