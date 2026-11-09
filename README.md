@@ -16,16 +16,18 @@ time, for watching one or several instruments as they sound.
 
 ## How to use
 
-1. Click **Microphone** and allow the browser to use your microphone.
-2. Strike your singing bowl.
-3. Wait a few seconds while the app records and analyses the ring-out. A line under the spiral
+1. Click **Measure** at the top of the page. The app opens in the mode it was last used in; in
+   *Observe* it shows the spectrum in real time but measures nothing (see below).
+2. Click **Microphone** and allow the browser to use your microphone.
+3. Strike your singing bowl.
+4. Wait a few seconds while the app records and analyses the ring-out. A line under the spiral
    shows the progress and says when the result is ready; the list of partials (the fundamental
    and the overtones) then appears. Every further strike is analysed too, and the best
    measurement is kept.
-4. Click **Microphone** again to switch it off.
-5. Inspect the overtones on the spiral or in the list. **Export list** saves the list as a text
+5. Click **Microphone** again to switch it off.
+6. Inspect the overtones on the spiral or in the list. **Export list** saves the list as a text
    file, **Export image** saves the spiral as a picture.
-6. Click **Save current** under *Saved bowls* to keep the measurement for later use, for example
+7. Click **Save current** under *Saved bowls* to keep the measurement for later use, for example
    to compare it with another bowl: saved bowls are drawn on the spiral as coloured rings, so
    matching overtones show up in the same place. Saved bowls stay in this browser on this
    device; *Export* there makes a file copy that *Import* reads back.
@@ -38,10 +40,10 @@ the file onto the page.
 On an iPhone, open the app in Safari, tap **Share → Add to Home Screen**, and open it once from the
 home screen while online. From then on it starts without a network connection: a service worker keeps
 the page (its fonts are part of it) and its icons in the phone's cache and serves them from there,
-without using the network. A new version is picked up when the app is opened with a connection; if it is still running
-in the background, close it in the app switcher first. (Android: Chrome's menu → *Add to Home screen*
-or *Install app*.) The home-screen app keeps its own saved bowls, separate from Safari's; use *Export*
-and *Import* under *Saved bowls* to move them across.
+without using the network. A new version is picked up when the app is opened with a connection; if it
+is still running in the background, close it in the app switcher first. (Android: Chrome's menu →
+*Add to Home screen* or *Install app*.) The home-screen app keeps its own saved bowls, separate from
+Safari's; use *Export* and *Import* under *Saved bowls* to move them across.
 
 If the phone interrupts the microphone (the screen goes dark, a call comes in), the app reconnects it
 when you return. Should the phone not allow that without a touch, the status line asks you to tap
@@ -62,8 +64,9 @@ microphone, and every request the app made to the network), which *Copy log* put
 4. With a recording, Observe shows the spectrum at the cursor on the timeline: click or drag there
    to look at any moment, press the space bar to play from it, or **▶ All** to play from the start.
 5. **Save current** keeps the partials sounding at that moment as a set of rings, like a measured
-   bowl. *Settings → Observe* sets the frame length (shorter follows faster changes, longer
-   separates close partials) and how quickly the display follows the sound.
+   bowl. *Settings → Observe* sets the frame length (long by default; shorter follows faster
+   changes, longer separates close partials) and how quickly the display follows the sound
+   (steady by default).
 
 ## What it does
 

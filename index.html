@@ -168,7 +168,10 @@ tr.fading td { opacity: .42; transition: opacity .4s; }                     /* O
 .tl-hint { position: absolute; right: 12px; top: 8px; font: 11px var(--mono); color: var(--faint); pointer-events: none; }
 
 /* settings */
-.settings { position: absolute; right: 16px; top: 56px; z-index: 20; width: min(420px, calc(100vw - 32px)); max-height: calc(100% - 80px); overflow: auto; background: var(--panel); border: 1px solid var(--rule); border-radius: 10px; padding: 16px 18px 18px; box-shadow: 0 18px 50px rgba(0, 0, 0, .5); }
+.settings { position: absolute; right: 16px; top: 56px; z-index: 20; width: min(420px, calc(100vw - 32px)); max-height: calc(100% - 80px); overflow: auto; background: var(--panel); border: 1px solid var(--rule); border-radius: 10px; padding: 0 18px 18px; box-shadow: 0 18px 50px rgba(0, 0, 0, .5); }
+.set-head { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 -18px 6px; padding: 10px 12px 10px 18px; background: var(--panel); border-bottom: 1px solid var(--rule); }
+.set-head span { font: 600 15px var(--ui); color: var(--chalk); }
+.set-head + h3 { margin-top: 12px; }
 .settings h3 { margin: 4px 0 10px; font: 600 11px var(--ui); letter-spacing: .1em; text-transform: uppercase; color: var(--dim); }
 .settings h3:not(:first-child) { margin-top: 18px; }
 .field { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 4px 12px; margin: 8px 0; font-size: 13px; }
@@ -219,7 +222,7 @@ tr.fading td { opacity: .42; transition: opacity .4s; }                     /* O
   .app { height: auto; min-height: 100%; }
   .main { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto auto; }
   /* narrow screens: spiral, then the list of partials, then the timeline */
-  .scope { grid-row: 1; aspect-ratio: 1; max-width: 100%; }
+  .scope { grid-row: 1; height: calc(100vw + 40px); max-width: 100%; place-items: start center; }   /* resizeSpiral sets the exact height and top */
   .ledger { grid-column: 1; grid-row: 2; border-left: 0; border-top: 1px solid var(--rule); }
   .timeline { grid-row: 3; height: 140px; }
   .lib { max-height: none; }
@@ -229,6 +232,9 @@ tr.fading td { opacity: .42; transition: opacity .4s; }                     /* O
   .sep { display: none; }
 }
 @media (max-width: 480px) {
+  /* phones: settings fill the screen and are left with Done */
+  .settings { position: fixed; inset: 0; width: auto; max-height: none; border: 0; border-radius: 0; box-shadow: none; padding-bottom: calc(24px + env(safe-area-inset-bottom)); }
+  .set-head { padding-top: max(10px, env(safe-area-inset-top)); }
   /* phones: the five columns fit widths down to 340 px without sideways scrolling */
   th, td { padding-left: 4px; padding-right: 4px; }
   th:first-child, td:first-child { padding-left: 10px; }
@@ -336,6 +342,7 @@ tr.fading td { opacity: .42; transition: opacity .4s; }                     /* O
   <footer class="site-foot">Overtone Spiral <span id="verTxt"></span> · free software (GPL-3.0) · <a href="https://github.com/michaelkopp/overtonespiral" target="_blank" rel="noopener">Source code and paper on GitHub</a></footer>
 
   <div class="settings" id="settings" hidden role="dialog" aria-label="Settings">
+    <div class="set-head"><span>Settings</span><button class="btn small" id="setDone">Done</button></div>
     <h3>List of partials</h3>
     <p class="set-note">These choose which measured partials are listed and how they are named. The measurement itself is always made the same way: 170 ms frames, windows of up to 5 s, chosen by the default criteria below.</p>
     <div class="field"><label for="sA4">Reference A4 (Hz)</label><input type="number" id="sA4" min="380" max="480" step="0.1"><small>Note names and cents are relative to 12-tone equal temperament at this A4.</small></div>
@@ -1409,7 +1416,7 @@ const OFRAME = { short: 0.04, medium: 0.08, long: 0.16 };                       
 const OSMOOTH = { fast: [0.008, 0.03], medium: [0.015, 0.06], steady: [0.04, 0.17] }; // Observe: attack, release (s)
 
 /* ---------------- settings ---------------- */
-const DEF = { app: 'measure', oFrame: 'medium', oSmooth: 'medium', a4: 440, thr: 70, dyn: 60, minDur: 1, low: 2, oct: 7, range: 60, lobe: 22, mode: 'mean', spell: 'sharp', bg: 'dark', ovLabels: 'notes' };
+const DEF = { app: 'measure', oFrame: 'long', oSmooth: 'steady', a4: 440, thr: 70, dyn: 60, minDur: 1, low: 2, oct: 7, range: 60, lobe: 22, mode: 'mean', spell: 'sharp', bg: 'dark', ovLabels: 'notes' };
 const S = Object.assign({}, DEF);
 try { Object.assign(S, JSON.parse(localStorage.getItem('overtone-spiral-settings') || localStorage.getItem('overtone-spiral-settings') || '{}')); } catch (e) {}
 function saveSettings() { try { localStorage.setItem('overtone-spiral-settings', JSON.stringify(S)); } catch (e) {} }
@@ -1436,7 +1443,7 @@ const measOk = t => t.conf >= MEAS.thr && t.rel >= -MEAS.dyn;       // a confide
 function cellCfg() { return { f0: F0, cellCents: CELL_CENTS, range: 100 }; }
 function confColor(c) { return c >= 0.85 ? 'var(--good)' : c >= 0.6 ? 'var(--warn)' : 'var(--bad)'; }
 /* ---------------- version and event log (Settings → About this copy) ---------------- */
-const APP_VERSION = '1.4', APP_BUILD = '6bc8f2034f5a';    // set by the build; APP_BUILD also names the offline copy
+const APP_VERSION = '1.5', APP_BUILD = 'd15f8b6807c2';    // set by the build; APP_BUILD also names the offline copy
 const LOG_KEY = 'overtone-spiral-log';
 let evlog = []; try { evlog = JSON.parse(localStorage.getItem(LOG_KEY) || '[]'); } catch (e) {}
 function logEvent(msg) {
@@ -1536,8 +1543,9 @@ let geomCache = null;
 function geomFor(size, scale = 1) {
   const key = [size, scale, S.a4, S.low, S.oct].join('|');
   if (geomCache && geomCache.key === key) return geomCache;
-  const margin = 44 * scale;
-  const R = size / 2 - margin, r0 = R * 0.13, oct = +S.oct, dr = (R - r0) / oct;
+  // the ring of note names takes 44 px, less on a small spiral (a phone), which leaves more room for the spiral
+  const margin = Math.min(44, Math.max(30, 0.085 * size / scale)) * scale;
+  const R = size / 2 - margin, r0 = R * 0.2, oct = +S.oct, dr = (R - r0) / oct;
   const fmin = S.a4 * Math.pow(2, (12 * (+S.low + 1) - 69) / 12);
   const i0 = Math.max(1, Math.ceil(Math.log2(fmin / F0) * CPO)), i1 = Math.min(NCELLS - 2, Math.floor(Math.log2(fmin * Math.pow(2, oct) / F0) * CPO));
   // boundary (i-0.5) and centre geometry for each cell
@@ -1549,7 +1557,7 @@ function geomFor(size, scale = 1) {
     bs[j] = Math.sin(2 * Math.PI * ub); bc[j] = Math.cos(2 * Math.PI * ub); br[j] = r0 + dr * ub;
     cs[j] = Math.sin(2 * Math.PI * uc); cc[j] = Math.cos(2 * Math.PI * uc); cr[j] = r0 + dr * uc;
   }
-  geomCache = { key, size, scale, cx: size / 2, cy: size / 2, R, r0, dr, oct, fmin, i0, i1, bs, bc, br, cs, cc, cr };
+  geomCache = { key, size, scale, margin, cx: size / 2, cy: size / 2, R, r0, dr, oct, fmin, i0, i1, bs, bc, br, cs, cc, cr };
   return geomCache;
 }
 
@@ -1557,14 +1565,14 @@ function drawSpiral(g2, size, opt) {
   const scale = opt.scale || 1;
   const g = geomFor(size, scale);
   const p = PAL[opt.theme || 'dark'];
-  const { cx, cy, R, r0, dr, oct } = g;
+  const { cx, cy, R, r0, dr, oct, margin } = g, mk = margin / (44 * scale);   // mk < 1 on a small spiral
   g2.fillStyle = p.bg; g2.fillRect(0, 0, size, size);
   // radial semitone lines
   g2.lineWidth = Math.max(1, scale);
   for (let k = 0; k < 12; k++) {
     const th = 2 * Math.PI * k / 12, s = Math.sin(th), c = Math.cos(th);
     g2.strokeStyle = k === 0 ? p.gridC : p.grid;
-    g2.beginPath(); g2.moveTo(cx + r0 * 0.55 * s, cy - r0 * 0.55 * c); g2.lineTo(cx + (R + 10 * scale) * s, cy - (R + 10 * scale) * c); g2.stroke();
+    g2.beginPath(); g2.moveTo(cx + r0 * 0.55 * s, cy - r0 * 0.55 * c); g2.lineTo(cx + (R + 10 * mk * scale) * s, cy - (R + 10 * mk * scale) * c); g2.stroke();
   }
   // spiral skeleton
   g2.strokeStyle = p.spiral; g2.beginPath();
@@ -1572,8 +1580,8 @@ function drawSpiral(g2, size, opt) {
   g2.stroke();
   // note names
   const names = S.spell === 'flat' ? ['C', 'D♭', 'D', 'E♭', 'E', 'F', 'G♭', 'G', 'A♭', 'A', 'B♭', 'B'] : ['C', 'C♯', 'D', 'D♯', 'E', 'F', 'F♯', 'G', 'G♯', 'A', 'A♯', 'B'];
-  g2.fillStyle = p.note; g2.font = `500 ${Math.round(15 * scale)}px Spectral, Georgia, serif`; g2.textAlign = 'center'; g2.textBaseline = 'middle';
-  for (let k = 0; k < 12; k++) { const th = 2 * Math.PI * k / 12, rr = R + 26 * scale; g2.fillText(names[k], cx + rr * Math.sin(th), cy - rr * Math.cos(th)); }
+  g2.fillStyle = p.note; g2.font = `500 ${Math.round(15 * (0.3 + 0.7 * mk) * scale)}px Spectral, Georgia, serif`; g2.textAlign = 'center'; g2.textBaseline = 'middle';
+  for (let k = 0; k < 12; k++) { const th = 2 * Math.PI * k / 12, rr = R + 26 * mk * scale; g2.fillText(names[k], cx + rr * Math.sin(th), cy - rr * Math.cos(th)); }
   // octave labels along the C line
   g2.fillStyle = p.dim; g2.font = `${Math.round(10 * scale)}px "Azeret Mono", Menlo, monospace`; g2.textAlign = 'right';
   for (let k = 0; k <= oct; k++) { const r = r0 + dr * k; g2.fillText('C' + (+S.low + k), cx - 5 * scale, cy - r - 6 * scale); }
@@ -1696,10 +1704,24 @@ function roundRect(g2, x, y, w, h, r) { g2.beginPath(); g2.moveTo(x + r, y); g2.
 const spiralCv = $('#spiral'), spiralG = spiralCv.getContext('2d');
 let spiralSize = 600, dpr = 1, dirty = true, hlTone = null, hits = [];
 const heights = new Float32Array(NCELLS);
+const narrowQ = window.matchMedia('(max-width: 900px)');
 function resizeSpiral() {
-  const r = $('#scope').getBoundingClientRect();
-  const extra = $('#scope').classList.contains('with-status') ? 44 : 0;
-  const sz = Math.max(260, Math.floor(Math.min(r.width - 8, r.height - 48 - extra)));   // leave room for the HUD line (and the status line)
+  const sc = $('#scope'), r = sc.getBoundingClientRect();
+  const extra = sc.classList.contains('with-status') ? 44 : 0;
+  let sz;
+  if (narrowQ.matches) {
+    // narrow screens: the spiral takes the full width, below the HUD line(s) and above the status line
+    const hud = $('#hud'), top = Math.max(36, hud.offsetTop + hud.offsetHeight + 6);
+    const ms = $('#micStatus'), below = extra && !ms.hidden ? ms.offsetHeight + 18 : 0;   // the status line may take two lines
+    sz = Math.max(260, Math.floor(r.width - 8));
+    const pad = top + 'px', h = (top + sz + below + 4) + 'px';
+    if (sc.style.paddingTop !== pad) sc.style.paddingTop = pad;
+    if (sc.style.height !== h) sc.style.height = h;
+  } else {
+    if (sc.style.height) { sc.style.height = ''; sc.style.paddingTop = ''; }
+    sz = Math.max(260, Math.floor(Math.min(r.width - 8, r.height - 48 - extra)));   // leave room for the HUD line (and the status line)
+  }
+  if (sz === spiralSize && spiralCv.width === Math.round(sz * Math.min(2.5, window.devicePixelRatio || 1))) return;
   dpr = Math.min(2.5, window.devicePixelRatio || 1);
   spiralSize = sz;
   spiralCv.style.width = sz + 'px'; spiralCv.style.height = sz + 'px';
@@ -2186,10 +2208,10 @@ function refreshAll() {
 function obsSpectrum(sr) {
   const o = st.obs, key = sr + ':' + S.oFrame;
   if (!o.ls || o.key !== key) {
-    o.ls = new C.LiveSpectrum(sr, { frame: OFRAME[S.oFrame] || OFRAME.medium, fmin: 25, fmax: 12500, f0: F0, cellCents: CELL_CENTS, nCells: NCELLS });
+    o.ls = new C.LiveSpectrum(sr, { frame: OFRAME[S.oFrame] || OFRAME.long, fmin: 25, fmax: 12500, f0: F0, cellCents: CELL_CENTS, nCells: NCELLS });
     o.key = key;
   }
-  const [a, r] = OSMOOTH[S.oSmooth] || OSMOOTH.medium;
+  const [a, r] = OSMOOTH[S.oSmooth] || OSMOOTH.steady;
   if (o.ls.attack !== a || o.ls.release !== r) o.ls.setTimes(a, r);
   o.ls.floorRange = +S.range + 25;            // levels rest just below the display range
   if (!o.list) o.list = new C.SteadyList();
@@ -3143,7 +3165,10 @@ for (const [id, k] of Object.entries(F)) {
     }
   });
 }
-$('#setBtn').onclick = () => { const p = $('#settings'); p.hidden = !p.hidden; $('#setBtn').setAttribute('aria-expanded', String(!p.hidden)); if (!p.hidden) renderAbout(); };
+function showSettings(on) { const p = $('#settings'); p.hidden = !on; $('#setBtn').setAttribute('aria-expanded', String(on)); if (on) { renderAbout(); p.scrollTop = 0; } }
+$('#setBtn').onclick = () => showSettings($('#settings').hidden);
+$('#setDone').onclick = () => showSettings(false);
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#settings').hidden) { e.preventDefault(); showSettings(false); } });
 $('#logCopy').onclick = async () => {
   const text = `Overtone Spiral ${APP_VERSION} (build ${APP_BUILD})\n${navigator.userAgent}\n\n` + evlog.join('\n');
   try { await navigator.clipboard.writeText(text); toast('The log is copied; paste it into a message.'); }
@@ -3189,7 +3214,7 @@ function loop() {
   } catch (e) { logError(e); dirty = false; tlDirty = false; }
 }
 const ro = new ResizeObserver(() => { resizeSpiral(); resizeTl(); });
-ro.observe($('#scope')); ro.observe($('#tlWrap'));
+ro.observe($('#scope')); ro.observe($('#tlWrap')); ro.observe($('#hud')); ro.observe($('#micStatus'));
 syncSettingsUI(); setApp(S.app); resizeSpiral(); resizeTl(); refreshAll();
 requestAnimationFrame(loop);
 if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { dirty = true; tlDirty = true; });

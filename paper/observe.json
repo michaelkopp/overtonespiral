@@ -72,7 +72,7 @@
    ]
   },
   {
-   "method": "Observe (default)",
+   "method": "Observe",
    "bg_quiet": 0.000013452160753321002,
    "flicker_quiet": 0.45710014228817225,
    "bg_noisy": 0.0007701362031276274,
@@ -205,6 +205,35 @@
     0.04154160544852063,
     0.0421405137183459,
     0.11442977074496438,
+    null
+   ],
+   "readout_found": [
+    7,
+    7,
+    7,
+    7,
+    7,
+    0
+   ]
+  },
+  {
+   "method": "Observe, long frames and steady smoothing (the default of the implementation)",
+   "bg_quiet": 0.000010089120564990752,
+   "flicker_quiet": 0.28946584130591146,
+   "bg_noisy": 0.001597444089456869,
+   "flicker_noisy": 3.465599587341219,
+   "full_ms": 200,
+   "gone_ms": 261,
+   "bg_clicks": 0,
+   "scene_calm": 245.60811965811965,
+   "scene_taps": 339.0625,
+   "scene_glides": 287.125,
+   "readout_rms_cents": [
+    0.021506197173863845,
+    0.015120044912778177,
+    0.02010182737471248,
+    0.020434680272651638,
+    0.0610059221595943,
     null
    ],
    "readout_found": [

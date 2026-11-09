@@ -95,11 +95,12 @@ const methods = [
   { name: 'unweighted power average', kind: 'measure' },
   { name: 'Observe, no weights', opts: { coherence: false, snrGate: false } },
   { name: 'Observe, level weight only', opts: { coherence: false } },
-  { name: 'Observe (default)', opts: {} },
+  { name: 'Observe', opts: {} },
   { name: 'Observe, fast smoothing', opts: { attack: 0.008, release: 0.03 } },
   { name: 'Observe, steady smoothing', opts: { attack: 0.04, release: 0.17 } },
   { name: 'Observe, short frames', opts: { frame: 0.04 } },
   { name: 'Observe, long frames', opts: { frame: 0.16 } },
+  { name: 'Observe, long frames and steady smoothing (the default of the implementation)', opts: { frame: 0.16, attack: 0.04, release: 0.17 } },
 ];
 const PARTS = [196.4, 541.7, 1043.2, 1694.6, 2486.3, 3412.8].map((f, i) => ({ f, a: [1, 0.5, 0.25, 0.1, 0.04, 0.02][i] }));
 const sigs = {
