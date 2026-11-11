@@ -308,6 +308,7 @@ tr.fading td { opacity: .42; transition: opacity .4s; }                     /* O
           <h2>Saved bowls<span id="libCount"></span></h2>
           <div class="lib-actions">
             <button class="btn small" id="saveBowlBtn">Save current</button>
+            <button class="link" id="libAllBtn" hidden>Check all</button>
             <button class="link" id="libExportBtn">Export</button>
             <label class="link" for="libImport" tabindex="0" id="libImportLbl">Import</label>
             <input type="file" id="libImport" accept=".json,application/json" hidden>
@@ -1443,7 +1444,7 @@ const measOk = t => t.conf >= MEAS.thr && t.rel >= -MEAS.dyn;       // a confide
 function cellCfg() { return { f0: F0, cellCents: CELL_CENTS, range: 100 }; }
 function confColor(c) { return c >= 0.85 ? 'var(--good)' : c >= 0.6 ? 'var(--warn)' : 'var(--bad)'; }
 /* ---------------- version and event log (Settings → About this copy) ---------------- */
-const APP_VERSION = '1.5', APP_BUILD = 'd15f8b6807c2';    // set by the build; APP_BUILD also names the offline copy
+const APP_VERSION = '1.6', APP_BUILD = 'b0d175dbb33b';    // set by the build; APP_BUILD also names the offline copy
 const LOG_KEY = 'overtone-spiral-log';
 let evlog = []; try { evlog = JSON.parse(localStorage.getItem(LOG_KEY) || '[]'); } catch (e) {}
 function logEvent(msg) {
@@ -2198,8 +2199,9 @@ function refreshAll() {
   $('#holdBtn').hidden = !(observing() && (st.mic || st.play));
   refreshHint();
   const canPlay = st.source === 'file' && !!st.x;
-  $('#playSelBtn').disabled = !canPlay || !st.sel; $('#playAllBtn').disabled = !canPlay;
-  $('#playSelBtn').textContent = st.play ? '■ Stop' : '▶ Window'; $('#playAllBtn').textContent = st.play ? '■ Stop' : '▶ All';
+  const playing = st.play ? st.play.which : null;               // 'sel' (Window) or 'all'
+  $('#playSelBtn').disabled = !canPlay || !st.sel || playing === 'all'; $('#playAllBtn').disabled = !canPlay || playing === 'sel';
+  $('#playSelBtn').textContent = playing === 'sel' ? '■ Stop' : '▶ Window'; $('#playAllBtn').textContent = playing === 'all' ? '■ Stop' : '▶ All';
 }
 
 /* =============================================================
@@ -2266,7 +2268,7 @@ function setApp(m) {
   S.app = m; saveSettings();
   hlTone = null; setHold(false);
   if (st.mic) { st.mic.reconfigure(); obsClear(); if (m === 'measure') { st.view = 'live'; setMicSpiral('live'); showMicCapture(); } }
-  if (st.play) { const p = st.play; startPlay(p.pos, p.t1); }        // carry on from the same place in the new mode
+  if (st.play) { const p = st.play; startPlay(p.pos, p.t1, p.which); }   // carry on from the same place in the new mode
   else if (m === 'observe' && st.source === 'file' && st.x) obsAt(st.obs.t != null ? st.obs.t : defaultObsT());
   else if (st.source === 'file') st.view = 'result';
   refreshAll();
@@ -2286,7 +2288,7 @@ function stopPlay() {
   if (observing()) { st.obs.t = pos; setHold(false); if (st.obs.ls) obsPublish(true); }
   refreshAll();
 }
-function startPlay(t0, t1) {
+function startPlay(t0, t1, which = 'all') {
   if (!st.x || st.source !== 'file') return;
   stopPlay();
   playCtx = playCtx || new (window.AudioContext || window.webkitAudioContext)();
@@ -2294,7 +2296,7 @@ function startPlay(t0, t1) {
   const src = playCtx.createBufferSource(); src.buffer = st.pbuf; src.connect(playCtx.destination);
   const dur = Math.max(0.05, t1 - t0);
   src.start(0, t0, dur);
-  st.play = { src, start: playCtx.currentTime, t0, t1, pos: t0 };
+  st.play = { src, start: playCtx.currentTime, t0, t1, pos: t0, which };
   src.onended = () => { if (st.play && st.play.src === src) stopPlay(); };
   st.view = 'live'; setHold(false); obsAt(t0);
   refreshAll();
@@ -2312,7 +2314,7 @@ function playTick() {
 $('#playSelBtn').onclick = () => {
   if (st.play) return stopPlay();
   if (!st.sel || !st.ctx) return;
-  const hs = st.ctx.hopSec; startPlay(st.sel.a * hs, st.sel.b * hs + st.ctx.winSec);
+  const hs = st.ctx.hopSec; startPlay(st.sel.a * hs, st.sel.b * hs + st.ctx.winSec, 'sel');
 };
 $('#playAllBtn').onclick = () => { if (st.play) return stopPlay(); startPlay(0, st.dur); };
 
@@ -2832,6 +2834,8 @@ function renderLegend() {
 function renderLib() {
   const ul = $('#libList'); ul.textContent = '';
   $('#libCount').textContent = lib.bowls.length ? String(lib.bowls.length) : '';
+  const allOn = lib.bowls.every(b => !lib.hidden.has(b.id));
+  $('#libAllBtn').hidden = lib.bowls.length < 2; $('#libAllBtn').textContent = allOn ? 'Uncheck all' : 'Check all';
   for (const b of lib.bowls) {
     const li = document.createElement('li'); if (lib.hidden.has(b.id)) li.className = 'off';
     const sw = document.createElement('button'); sw.className = 'swatch'; sw.style.setProperty('--c', b.color);
@@ -2873,7 +2877,7 @@ function renderLib() {
   if (!lib.ready) note.textContent = 'Loading saved bowls…';
   else if (lib.kind === 'off') note.textContent = 'Saved bowls are not available in this view.';
   else if (!lib.bowls.length) note.textContent = 'Measure a bowl, then Save current to keep its partials. Saved bowls are drawn on the spiral as coloured rings, so several bowls can be compared.';
-  else note.textContent = lib.kind === 'db' ? 'Kept with your account in this page. Export makes a file copy.' : 'Kept in this browser. Export makes a file copy (back-up, or to move bowls to another device).';
+  else note.textContent = lib.kind === 'db' ? 'Kept with your account in this page. Export makes a file copy of the checked bowls.' : 'Kept in this browser. Export makes a file copy of the checked bowls (back-up, or to move bowls to another device).';
   $('#saveBowlBtn').disabled = lib.kind === 'off';
 }
 // Observe mode: the partials sounding at the moment Save is pressed
@@ -2908,13 +2912,21 @@ $('#saveForm').addEventListener('submit', async e => {
 });
 // Export of the bowl library: the user may name the file; left empty, it is named after today's date.
 function libExportDefault() { const d = new Date(), p2 = n => String(n).padStart(2, '0'); return `overtone-spiral-bowls_${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}`; }
+const checkedBowls = () => lib.bowls.filter(b => !lib.hidden.has(b.id));
+$('#libAllBtn').onclick = () => {                                   // check all, or uncheck all when all are checked
+  const allOn = lib.bowls.every(b => !lib.hidden.has(b.id));
+  for (const b of lib.bowls) { if (allOn) lib.hidden.add(b.id); else lib.hidden.delete(b.id); }
+  saveHidden(); afterLib();
+};
 $('#libExportBtn').onclick = () => {
   if (!lib.bowls.length) return toast('There are no saved bowls to export yet.');
+  if (!checkedBowls().length) return toast('No bowl is checked. Check the bowls to export.');
   const f = $('#exportForm');
   if (!f.hidden) { f.hidden = true; return; }
   $('#saveForm').hidden = true;
   $('#exportName').value = ''; $('#exportName').placeholder = 'File name';
-  $('#exportHint').textContent = `Left empty, the file is named ${libExportDefault()}.json`;
+  const n = checkedBowls().length, all = lib.bowls.length;
+  $('#exportHint').textContent = `${n === all ? (n === 1 ? 'The bowl' : `All ${n} bowls`) : n === 1 ? `The checked bowl (1 of ${all})` : `The ${n} checked bowls (of ${all})`} will be exported. Left empty, the file is named ${libExportDefault()}.json`;
   f.hidden = false; $('#exportName').focus();
 };
 $('#exportCancel').onclick = () => { $('#exportForm').hidden = true; };
@@ -2923,7 +2935,7 @@ $('#exportForm').addEventListener('submit', e => {
   e.preventDefault();
   let name = $('#exportName').value.trim().replace(/\.json$/i, '').replace(/[\/\\:*?"<>|\u0000-\u001f]+/g, '_').replace(/^\.+/, '').trim();
   if (!name) name = libExportDefault();
-  const data = { app: 'Overtone Spiral', version: 1, exported: new Date().toISOString(), bowls: lib.bowls.map(b => { const c = Object.assign({}, b); delete c.id; return c; }) };
+  const data = { app: 'Overtone Spiral', version: 1, exported: new Date().toISOString(), bowls: checkedBowls().map(b => { const c = Object.assign({}, b); delete c.id; return c; }) };
   $('#exportForm').hidden = true;
   saveFile(name + '.json', JSON.stringify(data, null, 1), 'application/json');
 });
@@ -3195,7 +3207,7 @@ window.addEventListener('keydown', e => {
     else if (st.source === 'file' && st.x) { e.preventDefault(); if (st.play) stopPlay(); else startPlay(st.obs.t != null && st.obs.t < st.dur - 0.1 ? st.obs.t : 0, st.dur); }
     return;
   }
-  if (st.source === 'file') { e.preventDefault(); $('#playSelBtn').click(); }
+  if (st.source === 'file') { e.preventDefault(); if (st.play) stopPlay(); else $('#playSelBtn').click(); }
 });
 
 /* =============================================================

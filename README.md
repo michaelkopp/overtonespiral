@@ -30,7 +30,7 @@ time, for watching one or several instruments as they sound.
 7. Click **Save current** under *Saved bowls* to keep the measurement for later use, for example
    to compare it with another bowl: saved bowls are drawn on the spiral as coloured rings, so
    matching overtones show up in the same place. Saved bowls stay in this browser on this
-   device; *Export* there makes a file copy that *Import* reads back.
+   device; *Export* there makes a file copy of the checked bowls that *Import* reads back.
 
 Instead of using the microphone, you can analyse a recording with **Open audio…** or by dropping
 the file onto the page.
