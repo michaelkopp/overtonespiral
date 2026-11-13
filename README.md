@@ -33,7 +33,14 @@ time, for watching one or several instruments as they sound.
    device; *Export* there makes a file copy of the checked bowls that *Import* reads back.
 
 Instead of using the microphone, you can analyse a recording with **Open audio…** or by dropping
-the file onto the page.
+the file onto the page. A video works too (MP4, or the MOV files an iPhone records): the app takes
+the sound out of it and analyses that.
+
+**Clear** removes the recording or the microphone session and empties the spiral; saved bowls that
+are checked stay on it.
+
+The tuning reference is written in the centre of the spiral (*A4 = 440*). Click it to switch between
+A4 = 440 Hz and 432 Hz; note names and cents follow. Other values can be set in *Settings*.
 
 ### On a phone, also offline
 
@@ -78,7 +85,7 @@ microphone, and every request the app made to the network), which *Copy log* put
   measured partials are shown.
 - Lists every partial that passes a confidence test (signal-to-noise ratio, frequency stability,
   duration, continuity) with frequency in Hz, note name with octave and cents
-  (A4 = 440 Hz by default), ratio to the lowest partial, level, audibility and the standard
+  (A4 = 440 Hz by default; 432 Hz with a click on the centre of the spiral), ratio to the lowest partial, level, audibility and the standard
   uncertainty of the frequency.
 - Resolves split modes: a long-window zoom spectrum separates beating pairs and reports the beat
   rate and the partner frequency; beats too fast-decaying to separate are measured from the

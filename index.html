@@ -264,9 +264,10 @@ tr.fading td { opacity: .42; transition: opacity .4s; }                     /* O
     </div>
     <div class="controls">
       <div class="seg modeseg" role="group" aria-label="Mode"><button id="modeMeasure" aria-pressed="true" title="Measure the partials after each attack (or of the best-measured stretch)">Measure</button><button id="modeObserve" aria-pressed="false" title="Watch the spectrum in real time, also with several instruments sounding">Observe</button></div>
+      <button class="btn" id="clearBtn" title="Clear the recording or microphone session and the spiral (saved bowls stay)">Clear</button>
       <span class="sep"></span>
-      <label class="btn primary" for="fileIn" id="openBtn" tabindex="0">Open audio…</label>
-      <input type="file" id="fileIn" accept="audio/*,.m4a,.wav,.mp3,.aif,.aiff,.flac,.ogg,.caf" hidden>
+      <label class="btn primary" for="fileIn" id="openBtn" tabindex="0" title="Open a recording: an audio file, or a video whose sound is analysed">Open audio…</label>
+      <input type="file" id="fileIn" accept="audio/*,video/*,.m4a,.wav,.mp3,.aif,.aiff,.flac,.ogg,.caf,.mp4,.mov,.m4v,.webm" hidden>
       <button class="btn" id="micBtn" aria-pressed="false"><span class="dot"></span><span id="micTxt">Microphone</span></button>
       <span class="sep"></span>
       <button class="btn" id="playSelBtn" title="Play the analysed window (space)">▶ Window</button>
@@ -346,7 +347,7 @@ tr.fading td { opacity: .42; transition: opacity .4s; }                     /* O
     <div class="set-head"><span>Settings</span><button class="btn small" id="setDone">Done</button></div>
     <h3>List of partials</h3>
     <p class="set-note">These choose which measured partials are listed and how they are named. The measurement itself is always made the same way: 170 ms frames, windows of up to 5 s, chosen by the default criteria below.</p>
-    <div class="field"><label for="sA4">Reference A4 (Hz)</label><input type="number" id="sA4" min="380" max="480" step="0.1"><small>Note names and cents are relative to 12-tone equal temperament at this A4.</small></div>
+    <div class="field"><label for="sA4">Reference A4 (Hz)</label><input type="number" id="sA4" min="380" max="480" step="0.1"><small>Note names and cents are relative to 12-tone equal temperament at this A4. A click on the value in the centre of the spiral switches between 440 and 432 Hz.</small></div>
     <div class="field"><label for="sThr">Confidence threshold</label><span class="rangewrap"><input type="range" id="sThr" min="30" max="95" step="1"><output id="oThr"></output></span><small>Only partials at or above this confidence are listed and marked (default 70 %).</small></div>
     <div class="field"><label for="sDyn">Weakest partial listed</label><span class="rangewrap"><input type="range" id="sDyn" min="20" max="80" step="1"><output id="oDyn"></output></span><small>Level below the strongest partial in the window (default −60 dB).</small></div>
     <div class="field"><label for="sMinDur">Shortest partial listed</label><span class="rangewrap"><input type="range" id="sMinDur" min="0" max="3" step="0.1"><output id="oMinDur"></output></span><small>Partials heard for less time than this are left out (default 1 s). Off lists every confident partial, however short.</small></div>
@@ -370,7 +371,7 @@ tr.fading td { opacity: .42; transition: opacity .4s; }                     /* O
     <div class="logbtns"><button class="btn small" id="logCopy">Copy log</button><button class="btn small" id="logClear">Clear log</button></div>
   </div>
 
-  <div class="drop" id="drop" hidden>Drop an audio file to analyse it</div>
+  <div class="drop" id="drop" hidden>Drop an audio or video file to analyse it</div>
   <div class="toast" id="toast" hidden role="status"></div>
 </div>
 
@@ -1444,7 +1445,7 @@ const measOk = t => t.conf >= MEAS.thr && t.rel >= -MEAS.dyn;       // a confide
 function cellCfg() { return { f0: F0, cellCents: CELL_CENTS, range: 100 }; }
 function confColor(c) { return c >= 0.85 ? 'var(--good)' : c >= 0.6 ? 'var(--warn)' : 'var(--bad)'; }
 /* ---------------- version and event log (Settings → About this copy) ---------------- */
-const APP_VERSION = '1.6', APP_BUILD = 'b0d175dbb33b';    // set by the build; APP_BUILD also names the offline copy
+const APP_VERSION = '1.7', APP_BUILD = '2a6b4d574ed2';    // set by the build; APP_BUILD also names the offline copy
 const LOG_KEY = 'overtone-spiral-log';
 let evlog = []; try { evlog = JSON.parse(localStorage.getItem(LOG_KEY) || '[]'); } catch (e) {}
 function logEvent(msg) {
@@ -1588,7 +1589,11 @@ function drawSpiral(g2, size, opt) {
   for (let k = 0; k <= oct; k++) { const r = r0 + dr * k; g2.fillText('C' + (+S.low + k), cx - 5 * scale, cy - r - 6 * scale); }
   // centre: tuning reference
   g2.textAlign = 'center'; g2.fillStyle = p.dim; g2.font = `${Math.round(9.5 * scale)}px "Azeret Mono", Menlo, monospace`;
-  g2.fillText('A4 = ' + (+S.a4).toFixed(+S.a4 % 1 ? 1 : 0), cx, cy);
+  const a4t = 'A4 = ' + (+S.a4).toFixed(+S.a4 % 1 ? 1 : 0);
+  g2.fillText(a4t, cx, cy);
+  { const w = g2.measureText(a4t).width, y = cy + 7 * scale;        // a dotted underline: the value can be clicked
+    g2.save(); g2.strokeStyle = p.dim; g2.globalAlpha = 0.55; g2.lineWidth = scale; g2.setLineDash([1.5 * scale, 2 * scale]);
+    g2.beginPath(); g2.moveTo(cx - w / 2, y); g2.lineTo(cx + w / 2, y); g2.stroke(); g2.restore(); }
 
   // spectral lobes
   const v = opt.heights;
@@ -2130,6 +2135,212 @@ tlCv.addEventListener('pointerup', e => {
 });
 
 /* =============================================================
+   The sound of a video (MP4, QuickTime .mov). Safari does not decode the sound of the .mov files an iPhone
+   records, so the sound track is taken out of the file here: its AAC frames become an ADTS stream (.aac),
+   MP3 frames an MP3 stream, uncompressed samples an audio buffer directly. Only the index of the file (the
+   'moov' box) and the sound itself are read, so that a long video need not be held in memory.
+   ============================================================= */
+const MP4_NAME = /\.(mp4|m4v|mov|qt|3gp|3g2)$/i;
+const readBytes = async (file, a, b) => new Uint8Array(await file.slice(a, b).arrayBuffer());
+const fourcc = (u, a) => String.fromCharCode(u[a], u[a + 1], u[a + 2], u[a + 3]);
+function* isoBoxes(u, a, b) {                       // boxes in [a, b) of u: {type, start (payload), end}
+  const dv = new DataView(u.buffer, u.byteOffset, u.byteLength);
+  while (a + 8 <= b) {
+    let size = dv.getUint32(a), hdr = 8;
+    if (size === 1) { size = Number(dv.getBigUint64(a + 8)); hdr = 16; } else if (size === 0) size = b - a;
+    if (size < hdr || a + size > b) return;
+    yield { type: fourcc(u, a + 4), start: a + hdr, end: a + size };
+    a += size;
+  }
+}
+const isoChild = (u, box, type) => { if (box) for (const c of isoBoxes(u, box.start, box.end)) if (c.type === type) return c; return null; };
+async function videoSound(file, progress) {
+  // the top-level boxes, read by their headers only, up to the index
+  let a = 0, moov = null, first = true;
+  while (a + 8 <= file.size) {
+    const h = await readBytes(file, a, Math.min(file.size, a + 16)), dv = new DataView(h.buffer);
+    let size = dv.getUint32(0); const type = fourcc(h, 4);
+    if (first && !['ftyp', 'moov', 'mdat', 'wide', 'free', 'skip', 'pnot'].includes(type)) throw new Error('not an MP4 or QuickTime file');
+    first = false;
+    if (size === 1) size = Number(dv.getBigUint64(8)); else if (size === 0) size = file.size - a;
+    if (size < 8) break;
+    if (type === 'moov') { moov = await readBytes(file, a, a + size); break; }
+    a += size;
+  }
+  if (!moov) throw new Error('no index (moov) in the file');
+  const dv = new DataView(moov.buffer), top = isoBoxes(moov, 0, moov.length).next().value;
+  let unsupported = '';
+  for (const trak of isoBoxes(moov, top.start, top.end)) {
+    if (trak.type !== 'trak') continue;
+    const mdia = isoChild(moov, trak, 'mdia'), hdlr = isoChild(moov, mdia, 'hdlr');
+    if (!hdlr || fourcc(moov, hdlr.start + 8) !== 'soun') continue;
+    const stbl = isoChild(moov, isoChild(moov, mdia, 'minf'), 'stbl'), stsd = isoChild(moov, stbl, 'stsd');
+    if (!stsd) continue;
+    const entry = isoBoxes(moov, stsd.start + 8, stsd.end).next().value; if (!entry) continue;
+    const fmt = entry.type, ver = dv.getUint16(entry.start + 8);
+    let ch = dv.getUint16(entry.start + 16), bits = dv.getUint16(entry.start + 18), rate = dv.getUint32(entry.start + 24) / 65536, flags = 0, bpf = 0;
+    if (ver === 2) { rate = dv.getFloat64(entry.start + 32); ch = dv.getUint32(entry.start + 40); bits = dv.getUint32(entry.start + 48); flags = dv.getUint32(entry.start + 52); bpf = dv.getUint32(entry.start + 56); }
+    const kids = entry.start + 28 + (ver === 1 ? 16 : ver === 2 ? 36 : 0);
+    let esds = null, littleEndian = false;
+    for (const c of isoBoxes(moov, kids, entry.end)) {
+      if (c.type === 'esds') esds = c;
+      if (c.type === 'wave') for (const w of isoBoxes(moov, c.start, c.end)) { if (w.type === 'esds') esds = w; if (w.type === 'enda') littleEndian = dv.getUint16(w.start) === 1; }
+    }
+    // what kind of sound
+    let kind = null, aac = null;
+    if (fmt === 'mp4a' && esds) {
+      const d = esdsConfig(moov, esds);
+      if (d && (d.oti === 0x40 || d.oti === 0x66 || d.oti === 0x67 || d.oti === 0x68) && d.asc) { aac = ascParse(d.asc); if (aac.aot >= 1 && aac.aot <= 4 && aac.sfi < 13 && aac.ch > 0 && aac.ch < 8) kind = 'aac'; }
+      else if (d && (d.oti === 0x69 || d.oti === 0x6B)) kind = 'mp3';
+    } else if (fmt === '.mp3') kind = 'mp3';
+    else if (['sowt', 'twos', 'in24', 'in32', 'fl32', 'fl64', 'raw ', 'lpcm', 'NONE'].includes(fmt)) kind = 'pcm';
+    if (!kind) { unsupported = unsupported || fmt; continue; }
+    // the edit list may skip the encoder's priming samples at the start (media time in the track's time scale)
+    let skip = 0;
+    const mdhd = isoChild(moov, mdia, 'mdhd'), elst = isoChild(moov, isoChild(moov, trak, 'edts'), 'elst');
+    if (mdhd && elst) {
+      const v = moov[mdhd.start], ts = dv.getUint32(mdhd.start + (v === 1 ? 20 : 12)), ev = moov[elst.start], n = dv.getUint32(elst.start + 4);
+      for (let i = 0; i < n; i++) {
+        const m = ev === 1 ? Number(dv.getBigInt64(elst.start + 8 + 20 * i + 8)) : dv.getInt32(elst.start + 8 + 12 * i + 4);
+        if (m >= 0) { skip = ts ? m / ts : 0; break; }        // the first entry that is not an empty edit
+      }
+    }
+    // the sample table: chunk offsets, samples per chunk, sample sizes
+    const stsc = isoChild(moov, stbl, 'stsc'), stsz = isoChild(moov, stbl, 'stsz'), stco = isoChild(moov, stbl, 'stco'), co64 = isoChild(moov, stbl, 'co64');
+    if (!stsc || !stsz || !(stco || co64)) throw new Error('incomplete sample table');
+    const nChunks = dv.getUint32((stco || co64).start + 4), offs = new Array(nChunks);
+    for (let i = 0; i < nChunks; i++) offs[i] = stco ? dv.getUint32(stco.start + 8 + 4 * i) : Number(dv.getBigUint64(co64.start + 8 + 8 * i));
+    const nE = dv.getUint32(stsc.start + 4), spc = new Array(nChunks);
+    for (let e = 0; e < nE; e++) {
+      const f0 = dv.getUint32(stsc.start + 8 + 12 * e) - 1, f1 = e + 1 < nE ? dv.getUint32(stsc.start + 8 + 12 * (e + 1)) - 1 : nChunks, n = dv.getUint32(stsc.start + 12 + 12 * e);
+      for (let c = f0; c < Math.min(f1, nChunks); c++) spc[c] = n;
+    }
+    const fixed = dv.getUint32(stsz.start + 4), nS = dv.getUint32(stsz.start + 8);
+    const sizeOf = i => (fixed ? fixed : dv.getUint32(stsz.start + 12 + 4 * i));
+    // PCM: bytes per frame; in QuickTime the table counts frames of nominal size 1
+    let bps = 0, isFloat = false, bigEndian = true;
+    if (kind === 'pcm') {
+      if (fmt === 'lpcm') { isFloat = !!(flags & 1); bigEndian = !!(flags & 2); bps = Math.round(bits / 8); }
+      else if (fmt === 'sowt') { bps = 2; bigEndian = false; }
+      else if (fmt === 'twos' || fmt === 'NONE') { bps = bits === 8 ? 1 : 2; }
+      else if (fmt === 'raw ') { bps = 1; }
+      else if (fmt === 'in24') { bps = 3; bigEndian = !littleEndian; }
+      else if (fmt === 'in32') { bps = 4; bigEndian = !littleEndian; }
+      else if (fmt === 'fl32') { bps = 4; isFloat = true; bigEndian = !littleEndian; }
+      else if (fmt === 'fl64') { bps = 8; isFloat = true; bigEndian = !littleEndian; }
+      if (!bpf) bpf = bps * ch;
+      if (!bps || !ch || !rate) throw new Error('unknown PCM layout');
+    }
+    // read the sound chunk by chunk (neighbouring chunks in one read)
+    const parts = []; let si = 0, total = 0;
+    for (let c = 0; c < nChunks; ) {
+      let c1 = c, end = offs[c], frames = [];
+      while (c1 < nChunks && offs[c1] === end && end - offs[c] < (8 << 20)) {
+        const n = spc[c1] || 0;
+        for (let k = 0; k < n && si < nS; k++, si++) { const sz = kind === 'pcm' ? (fixed > 1 ? fixed : bpf) : sizeOf(si); frames.push(sz); end += sz; }
+        c1++;
+      }
+      if (c1 === c) { c1 = c + 1; continue; }
+      const u = await readBytes(file, offs[c], end);
+      let p = 0; for (const sz of frames) { parts.push(u.subarray(p, p + sz)); p += sz; total += sz; }
+      c = c1;
+      progress && progress(0.9 * c / nChunks);
+    }
+    if (!parts.length) throw new Error('no sound in the track');
+    if (kind === 'pcm') return trimStart(pcmBuffer(parts, total, ch, rate, bps, isFloat, bigEndian, fmt === 'raw '), skip);
+    progress && progress(0.95);
+    // AAC: the frames in an audio-only MPEG-4 file (.m4a), or else an ADTS stream; MP3: the frames as they are
+    if (kind === 'aac') {
+      const stts = isoChild(moov, stbl, 'stts'), mdhd2 = isoChild(moov, mdia, 'mdhd');
+      const ts = mdhd2 ? dv.getUint32(mdhd2.start + (moov[mdhd2.start] === 1 ? 20 : 12)) : rate;
+      const m4a = m4aFile(parts, total, moov.subarray(esds.start - 8, esds.end), stts && parts.length === nS ? moov.subarray(stts.start - 8, stts.end) : null, ts, ch, rate);
+      if (window.__osKeep) window.__osKeep = m4a.slice();  // for tests
+      try { return trimStart(await decodeAudio(m4a.buffer), skip); }
+      catch (e) { logEvent('video: m4a not decoded, trying ADTS'); }
+    }
+    const out = new Uint8Array(total + (kind === 'aac' ? 7 * parts.length : 0)); let p = 0;
+    for (const f of parts) { if (kind === 'aac') { out.set(adtsHeader(f.length, aac), p); p += 7; } out.set(f, p); p += f.length; }
+    return trimStart(await decodeAudio(out.buffer), skip);
+  }
+  throw new Error(unsupported ? 'the sound is coded as ' + unsupported.trim() : 'no sound track');
+}
+// a minimal audio-only MPEG-4 file around AAC frames: one track, all frames in one chunk
+function m4aFile(frames, total, esdsBox, sttsBox, ts, ch, rate) {
+  const u32 = v => [v >>> 24 & 255, v >>> 16 & 255, v >>> 8 & 255, v & 255], u16 = v => [v >> 8 & 255, v & 255];
+  const str = t => [...t].map(c => c.charCodeAt(0)), zeros = n => new Array(n).fill(0);
+  const box = (t, ...parts) => { const body = parts.flatMap(x => x instanceof Uint8Array ? Array.from(x) : x); return [...u32(8 + body.length), ...str(t), ...body]; };
+  const full = (t, vf, ...parts) => box(t, u32(vf), ...parts);
+  const matrix = [...u32(0x10000), ...u32(0), ...u32(0), ...u32(0), ...u32(0x10000), ...u32(0), ...u32(0), ...u32(0), ...u32(0x40000000)];
+  if (!sttsBox) sttsBox = new Uint8Array(full('stts', 0, u32(1), u32(frames.length), u32(1024)));
+  let dur = 0; { const d = new DataView(sttsBox.buffer, sttsBox.byteOffset, sttsBox.byteLength), n = d.getUint32(12); for (let i = 0; i < n; i++) dur += d.getUint32(16 + 8 * i) * d.getUint32(20 + 8 * i); }
+  const stsz = full('stsz', 0, u32(0), u32(frames.length), frames.flatMap(f => u32(f.length)));
+  const mp4a = box('mp4a', zeros(6), u16(1), zeros(8), u16(ch), u16(16), zeros(4), u32(rate < 65536 ? rate * 65536 : 0), esdsBox);
+  const ftyp = box('ftyp', str('M4A '), u32(0), str('M4A '), str('mp42'), str('isom'));
+  const moovFor = off => box('moov',
+    full('mvhd', 0, u32(0), u32(0), u32(ts), u32(dur), u32(0x10000), u16(0x100), zeros(10), matrix, zeros(24), u32(2)),
+    box('trak',
+      full('tkhd', 3, u32(0), u32(0), u32(1), u32(0), u32(dur), zeros(8), u16(0), u16(0), u16(0x100), u16(0), matrix, u32(0), u32(0)),
+      box('mdia',
+        full('mdhd', 0, u32(0), u32(0), u32(ts), u32(dur), u16(0x55C4), u16(0)),
+        full('hdlr', 0, u32(0), str('soun'), zeros(12), str('SoundHandler'), [0]),
+        box('minf',
+          full('smhd', 0, u16(0), u16(0)),
+          box('dinf', full('dref', 0, u32(1), full('url ', 1))),
+          box('stbl', full('stsd', 0, u32(1), mp4a), sttsBox, full('stsc', 0, u32(1), u32(1), u32(frames.length), u32(1)), stsz, full('stco', 0, u32(1), u32(off)))))));
+  const head = ftyp.length + moovFor(0).length + 8, moovB = moovFor(head);
+  const out = new Uint8Array(head + total); out.set(ftyp, 0); out.set(moovB, ftyp.length);
+  out.set([...u32(8 + total), ...str('mdat')], ftyp.length + moovB.length);
+  let p = head; for (const f of frames) { out.set(f, p); p += f.length; }
+  return out;
+}
+function trimStart(ab, sec) {
+  const k = Math.round(sec * ab.sampleRate);
+  if (!(k > 0 && k < ab.length / 2)) return ab;
+  const out = new AudioBuffer({ length: ab.length - k, numberOfChannels: ab.numberOfChannels, sampleRate: ab.sampleRate });
+  for (let c = 0; c < ab.numberOfChannels; c++) out.copyToChannel(ab.getChannelData(c).subarray(k), c);
+  return out;
+}
+function esdsConfig(u, esds) {                         // object type and AudioSpecificConfig from an esds box
+  let p = esds.start + 4;
+  const len = () => { let n = 0; for (let i = 0; i < 4; i++) { const b = u[p++]; n = (n << 7) | (b & 0x7f); if (!(b & 0x80)) break; } return n; };
+  if (u[p++] !== 3) return null; len(); p += 2; const fl = u[p++]; if (fl & 0x80) p += 2; if (fl & 0x40) p += 1 + u[p]; if (fl & 0x20) p += 2;
+  if (u[p++] !== 4) return null; len(); const oti = u[p]; p += 13;
+  if (u[p++] !== 5) return { oti, asc: null };
+  const n = len(); return { oti, asc: u.slice(p, p + n) };
+}
+function ascParse(a) {                                 // audio object type, sampling frequency index, channels
+  let bit = 0; const rd = n => { let v = 0; for (let i = 0; i < n; i++, bit++) v = (v << 1) | ((a[bit >> 3] >> (7 - (bit & 7))) & 1); return v; };
+  let aot = rd(5); if (aot === 31) aot = 32 + rd(6);
+  let sfi = rd(4); if (sfi === 15) { rd(24); sfi = 99; }
+  const ch = rd(4);
+  if (aot === 5 || aot === 29) { if (rd(4) === 15) rd(24); aot = rd(5); if (aot === 31) aot = 32 + rd(6); }   // HE-AAC: the core, with implicit SBR
+  return { aot, sfi, ch };
+}
+function adtsHeader(len, c) {
+  const L = len + 7, h = new Uint8Array(7);
+  h[0] = 0xFF; h[1] = 0xF1; h[2] = ((c.aot - 1) << 6) | (c.sfi << 2) | (c.ch >> 2);
+  h[3] = ((c.ch & 3) << 6) | (L >> 11); h[4] = (L >> 3) & 0xFF; h[5] = ((L & 7) << 5) | 0x1F; h[6] = 0xFC;
+  return h;
+}
+function pcmBuffer(parts, total, ch, rate, bps, isFloat, bigEndian, unsigned8) {
+  const n = Math.floor(total / (bps * ch)), chans = Array.from({ length: ch }, () => new Float32Array(n));
+  const all = new Uint8Array(total); let p = 0; for (const f of parts) { all.set(f, p); p += f.length; }
+  const dv = new DataView(all.buffer), le = !bigEndian;
+  for (let i = 0, o = 0; i < n; i++) for (let c = 0; c < ch; c++, o += bps) {
+    let v;
+    if (isFloat) v = bps === 4 ? dv.getFloat32(o, le) : dv.getFloat64(o, le);
+    else if (bps === 1) v = unsigned8 ? (all[o] - 128) / 128 : dv.getInt8(o) / 128;
+    else if (bps === 2) v = dv.getInt16(o, le) / 32768;
+    else if (bps === 3) { const b0 = all[o], b1 = all[o + 1], b2 = all[o + 2]; let x = le ? (b2 << 16) | (b1 << 8) | b0 : (b0 << 16) | (b1 << 8) | b2; if (x & 0x800000) x -= 0x1000000; v = x / 8388608; }
+    else v = dv.getInt32(o, le) / 2147483648;
+    chans[c][i] = v;
+  }
+  const ab = new AudioBuffer({ length: n, numberOfChannels: ch, sampleRate: rate });
+  chans.forEach((d, c) => ab.copyToChannel(d, c));
+  return ab;
+}
+
+/* =============================================================
    File analysis
    ============================================================= */
 let decodeCtx = null;
@@ -2143,7 +2354,23 @@ async function loadBuffer(name, arrayBuf) {
   setBusy(true, 'Decoding ' + name + '…', 0);
   let ab;
   try { ab = await decodeAudio(arrayBuf); }
-  catch (e) { setBusy(false); toast('This file could not be decoded by the browser. Try WAV, MP3, M4A/AAC or FLAC.'); return; }
+  catch (e) { setBusy(false); toast('This file could not be decoded by the browser. Try WAV, MP3, M4A/AAC or FLAC, or a video in MP4 or MOV.'); return; }
+  await loadDecoded(name, ab);
+}
+// a selected or dropped file: the sound of an MP4 or QuickTime video is read from the video itself (see videoSound)
+async function loadFile(f) {
+  if (MP4_NAME.test(f.name) || /^video\/(mp4|quicktime|3gpp|x-m4v)/.test(f.type)) {
+    stopPlay(); if (st.mic) await stopMic(); st.micLast = null;
+    setBusy(true, 'Reading the sound of ' + f.name + '…', 0);
+    let ab = null, why = '';
+    try { ab = await videoSound(f, frac => setBusy(true, null, frac)); } catch (e) { why = e.message || String(e); }
+    if (ab) return loadDecoded(f.name, ab);
+    logEvent('video: ' + why + '; trying the browser');
+    if (f.size > 300e6) { setBusy(false); toast(`The sound of this video could not be read (${why}).`); return; }   // too large to hand over whole
+  }
+  await loadBuffer(f.name, await f.arrayBuffer());
+}
+async function loadDecoded(name, ab) {
   const n = ab.length, ch = ab.numberOfChannels, x = new Float32Array(n);
   for (let c = 0; c < ch; c++) { const d = ab.getChannelData(c); for (let i = 0; i < n; i++) x[i] += d[i] / ch; }
   st.source = 'file'; st.name = name; st.sr = ab.sampleRate; st.x = x; st.dur = n / ab.sampleRate; st.pbuf = ab;
@@ -2199,6 +2426,7 @@ function refreshAll() {
   $('#holdBtn').hidden = !(observing() && (st.mic || st.play));
   refreshHint();
   const canPlay = st.source === 'file' && !!st.x;
+  $('#clearBtn').disabled = !st.source && !st.mic;
   const playing = st.play ? st.play.which : null;               // 'sel' (Window) or 'all'
   $('#playSelBtn').disabled = !canPlay || !st.sel || playing === 'all'; $('#playAllBtn').disabled = !canPlay || playing === 'sel';
   $('#playSelBtn').textContent = playing === 'sel' ? '■ Stop' : '▶ Window'; $('#playAllBtn').textContent = playing === 'all' ? '■ Stop' : '▶ All';
@@ -2317,6 +2545,18 @@ $('#playSelBtn').onclick = () => {
   const hs = st.ctx.hopSec; startPlay(st.sel.a * hs, st.sel.b * hs + st.ctx.winSec, 'sel');
 };
 $('#playAllBtn').onclick = () => { if (st.play) return stopPlay(); startPlay(0, st.dur); };
+// Clear: back to the empty spiral; the checked saved bowls stay on it
+async function clearAll() {
+  setSelection.tok = (setSelection.tok || 0) + 1;            // stops a window analysis still running
+  stopPlay();
+  if (st.mic) await stopMic();
+  st.micLast = null;
+  Object.assign(st, { source: null, name: '', x: null, dur: 0, pbuf: null, ctx: null, sel: null, result: null, cells: null, shown: null, view: 'result' });
+  obsClear(); hlTone = null; $('#tip').hidden = true;
+  $('#srcLabel').textContent = 'No audio loaded';
+  refreshAll();
+}
+$('#clearBtn').onclick = () => clearAll();
 
 /* =============================================================
    Microphone
@@ -2964,6 +3204,12 @@ function spiralTip(e) {
   const r = spiralCv.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
   const near = hits.filter(h => Math.hypot(h.x - x, h.y - y) <= h.r + 3).sort((a, b) => Math.hypot(a.x - x, a.y - y) - Math.hypot(b.x - x, b.y - y));
   const tip = $('#tip');
+  if (!near.length && e.pointerType === 'mouse' && overA4(e)) {
+    tip.textContent = `A4 = ${+S.a4} Hz · click to switch to ${+S.a4 === 440 ? 432 : 440} Hz`; tip.hidden = false;
+    const sr = $('#scope').getBoundingClientRect(), cx = e.clientX - sr.left, cy = e.clientY - sr.top;
+    tip.style.left = Math.max(8, Math.min(sr.width - tip.offsetWidth - 8, cx + 14)) + 'px'; tip.style.top = Math.max(8, cy + 14) + 'px';
+    return;
+  }
   if (!near.length) { tip.hidden = true; return; }
   const seen = new Set(), lines = [];
   for (const h of near) {
@@ -2979,6 +3225,18 @@ function spiralTip(e) {
   tip.style.left = Math.max(8, Math.min(sr.width - w - 8, cx + 14)) + 'px';
   tip.style.top = Math.max(8, Math.min(sr.height - h - 8, cy + 14)) + 'px';
 }
+// the tuning reference in the centre: a click switches between 440 and 432 Hz
+function overA4(e) {
+  const r = spiralCv.getBoundingClientRect(), dx = e.clientX - r.left - r.width / 2, dy = e.clientY - r.top - r.height / 2;
+  return Math.abs(dx) <= 34 && Math.abs(dy) <= 13;
+}
+function toggleA4() {
+  const v = +S.a4 === 440 ? 432 : 440, el = $('#sA4');
+  el.value = v; el.dispatchEvent(new Event('input'));         // as if typed in Settings: labels, list and spiral follow
+  toast(`Reference A4 = ${v} Hz`, 2200);
+}
+spiralCv.addEventListener('click', e => { if (overA4(e)) { toggleA4(); spiralTip(e); } });
+spiralCv.addEventListener('pointermove', e => { spiralCv.style.cursor = overA4(e) ? 'pointer' : ''; });
 spiralCv.addEventListener('pointermove', spiralTip);
 spiralCv.addEventListener('pointerdown', spiralTip);
 spiralCv.addEventListener('pointerleave', e => { if (e.pointerType === 'mouse') $('#tip').hidden = true; });
@@ -3192,13 +3450,13 @@ document.addEventListener('pointerdown', e => { const p = $('#settings'); if (!p
 /* =============================================================
    Inputs: file picker, drag and drop, keyboard
    ============================================================= */
-$('#fileIn').addEventListener('change', async e => { const f = e.target.files[0]; if (f) await loadBuffer(f.name, await f.arrayBuffer()); e.target.value = ''; });
+$('#fileIn').addEventListener('change', async e => { const f = e.target.files[0]; if (f) await loadFile(f); e.target.value = ''; });
 $('#openBtn').addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $('#fileIn').click(); } });
 let dragN = 0;
 window.addEventListener('dragenter', e => { if (e.dataTransfer && [...e.dataTransfer.types].includes('Files')) { dragN++; $('#drop').hidden = false; e.preventDefault(); } });
 window.addEventListener('dragover', e => e.preventDefault());
 window.addEventListener('dragleave', () => { if (--dragN <= 0) { dragN = 0; $('#drop').hidden = true; } });
-window.addEventListener('drop', async e => { e.preventDefault(); dragN = 0; $('#drop').hidden = true; const f = e.dataTransfer.files[0]; if (f) await loadBuffer(f.name, await f.arrayBuffer()); });
+window.addEventListener('drop', async e => { e.preventDefault(); dragN = 0; $('#drop').hidden = true; const f = e.dataTransfer.files[0]; if (f) await loadFile(f); });
 window.addEventListener('keydown', e => {
   if (e.target.closest('input, select, textarea')) return;
   if (e.code !== 'Space') return;
@@ -3264,7 +3522,7 @@ if (swOK()) {
   });
   window.addEventListener('load', () => { navigator.serviceWorker.register('sw.js').catch(() => {}); });
 }
-window.__os = { st, S, C, listTones, noteOf, toHeights, displayPower, drawSpiral, buildText, NCELLS };   // for debugging and scripted figures
+window.__os = { st, S, C, videoSound, m4aFile, listTones, noteOf, toHeights, displayPower, drawSpiral, buildText, NCELLS };   // for debugging and scripted figures
 })();
 </script>
 
