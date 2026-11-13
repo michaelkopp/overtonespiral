@@ -1445,7 +1445,7 @@ const measOk = t => t.conf >= MEAS.thr && t.rel >= -MEAS.dyn;       // a confide
 function cellCfg() { return { f0: F0, cellCents: CELL_CENTS, range: 100 }; }
 function confColor(c) { return c >= 0.85 ? 'var(--good)' : c >= 0.6 ? 'var(--warn)' : 'var(--bad)'; }
 /* ---------------- version and event log (Settings → About this copy) ---------------- */
-const APP_VERSION = '1.7', APP_BUILD = '2a6b4d574ed2';    // set by the build; APP_BUILD also names the offline copy
+const APP_VERSION = '1.7', APP_BUILD = '99a6d1561523';    // set by the build; APP_BUILD also names the offline copy
 const LOG_KEY = 'overtone-spiral-log';
 let evlog = []; try { evlog = JSON.parse(localStorage.getItem(LOG_KEY) || '[]'); } catch (e) {}
 function logEvent(msg) {
@@ -3204,12 +3204,6 @@ function spiralTip(e) {
   const r = spiralCv.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
   const near = hits.filter(h => Math.hypot(h.x - x, h.y - y) <= h.r + 3).sort((a, b) => Math.hypot(a.x - x, a.y - y) - Math.hypot(b.x - x, b.y - y));
   const tip = $('#tip');
-  if (!near.length && e.pointerType === 'mouse' && overA4(e)) {
-    tip.textContent = `A4 = ${+S.a4} Hz · click to switch to ${+S.a4 === 440 ? 432 : 440} Hz`; tip.hidden = false;
-    const sr = $('#scope').getBoundingClientRect(), cx = e.clientX - sr.left, cy = e.clientY - sr.top;
-    tip.style.left = Math.max(8, Math.min(sr.width - tip.offsetWidth - 8, cx + 14)) + 'px'; tip.style.top = Math.max(8, cy + 14) + 'px';
-    return;
-  }
   if (!near.length) { tip.hidden = true; return; }
   const seen = new Set(), lines = [];
   for (const h of near) {
@@ -3235,7 +3229,7 @@ function toggleA4() {
   el.value = v; el.dispatchEvent(new Event('input'));         // as if typed in Settings: labels, list and spiral follow
   toast(`Reference A4 = ${v} Hz`, 2200);
 }
-spiralCv.addEventListener('click', e => { if (overA4(e)) { toggleA4(); spiralTip(e); } });
+spiralCv.addEventListener('click', e => { if (overA4(e)) toggleA4(); });
 spiralCv.addEventListener('pointermove', e => { spiralCv.style.cursor = overA4(e) ? 'pointer' : ''; });
 spiralCv.addEventListener('pointermove', spiralTip);
 spiralCv.addEventListener('pointerdown', spiralTip);
