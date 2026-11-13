@@ -5,7 +5,7 @@
    comes with a new version of this file, which the browser looks for by itself when the app is opened online.
    Authors: Claude (Anthropic) and Michael Kopp. Copyright (C) 2026 Michael Kopp. SPDX-License-Identifier: GPL-3.0-or-later */
 'use strict';
-const VERSION = '2a6b4d574ed2';          // the build id, set by the build from the sources of everything kept here
+const VERSION = '99a6d1561523';          // the build id, set by the build from the sources of everything kept here
 const CACHE = 'overtone-spiral-' + VERSION;
 const CORE = ['./', 'index.html', 'manifest.webmanifest', 'icons/apple-touch-icon.png', 'icons/icon-192.png', 'icons/icon-512.png',
   'icons/icon-maskable-192.png', 'icons/icon-maskable-512.png', 'icons/favicon-64.png'];
@@ -19,6 +19,15 @@ self.addEventListener('install', event => {
     say(`installing build ${VERSION.slice(0, 6)}`);
     const cache = await caches.open(CACHE);
     await cache.addAll(CORE.map(u => new Request(u, { cache: 'reload' })));
+    // the page must be the one built with this file: while a new version is being uploaded, or while the site's
+    // servers still pass on the old page, this file can arrive before its page. Then nothing is installed, and the
+    // browser tries again the next time the app is opened online.
+    const page = await cache.match('index.html'), text = page ? await page.text() : '';
+    if (!text.includes(`APP_BUILD = '${VERSION}'`)) {
+      await caches.delete(CACHE);
+      say(`build ${VERSION.slice(0, 6)} not installed: the site does not serve its page yet; trying again next time`);
+      throw new Error('page and service worker differ');
+    }
     say(`build ${VERSION.slice(0, 6)} installed, ${(await cache.keys()).length} files kept`);
     await self.skipWaiting();
   })());
